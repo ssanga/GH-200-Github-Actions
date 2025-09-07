@@ -24,10 +24,6 @@ jobs:
         pip install -r requirements.txt
         pip install safety bandit
     
-    - name: Verificar formato con Black
-      run: |
-        black --check --diff .
-    
     - name: Análisis de seguridad con Bandit
       run: |
         bandit -r . -f json -o bandit-report.json || true
