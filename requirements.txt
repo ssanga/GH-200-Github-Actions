@@ -1,0 +1,14 @@
+# Dependencias para el proyecto de calculadora
+# Para este proyecto simple no necesitamos dependencias externas
+# pero incluimos algunas útiles para desarrollo y testing
+
+# Testing
+pytest>=7.0.0
+pytest-cov>=4.0.0
+
+# Linting y formateo
+flake8>=6.0.0
+black>=23.0.0
+
+# Documentación
+sphinx>=5.0.0
