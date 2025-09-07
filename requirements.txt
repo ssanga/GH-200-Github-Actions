@@ -12,7 +12,6 @@ flake8>=6.0.0
 
 # Seguridad
 bandit>=1.7.0
-safety>=2.0.0
 
 # Documentación
 sphinx>=5.0.0
