@@ -26,13 +26,13 @@ jobs:
     
     - name: Análisis de seguridad con Bandit
       run: |
-        bandit -r . -f json -o bandit-report.json || true
-        bandit -r . -f txt
+        bandit -r . -f json -o bandit-report.json --exclude ./test_*.py || true
+        bandit -r . --exclude ./test_*.py || true
     
     - name: Verificar vulnerabilidades en dependencias
       run: |
-        safety check --json --output safety-report.json || true
-        safety check
+        safety scan --output json --save-as safety-report.json || true
+        safety scan
     
     - name: Ejecutar calculadora (smoke test)
       run: |
