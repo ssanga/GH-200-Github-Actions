@@ -73,4 +73,4 @@ jobs:
     
     - name: Verificar cobertura mínima
       run: |
-        coverage report --fail-under=80
+        coverage report --fail-under=90
