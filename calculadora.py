@@ -33,6 +33,9 @@ class Calculadora:
             raise ValueError("No se puede calcular la raíz cuadrada de un número negativo")
         return numero ** 0.5
 
+    def nothing(self, numero):
+        return numero
+
 
 def main():
     """Función principal para demostrar el uso de la calculadora"""
