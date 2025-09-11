@@ -3,7 +3,9 @@ Tests unitarios para la calculadora
 """
 
 import unittest
-from calculadora import Calculadora
+from unittest.mock import patch
+from io import StringIO
+from calculadora import Calculadora, main
 
 
 class TestCalculadora(unittest.TestCase):
@@ -64,6 +66,21 @@ class TestCalculadora(unittest.TestCase):
         """Test para verificar que la raíz cuadrada de número negativo lanza excepción"""
         with self.assertRaises(ValueError):
             self.calc.raiz_cuadrada(-4)
+    
+    @patch('sys.stdout', new_callable=StringIO)
+    def test_main_function(self, mock_stdout):
+        """Test para la función main que demuestra el uso de la calculadora"""
+        main()
+        output = mock_stdout.getvalue()
+        
+        # Verificar que la salida contiene los resultados esperados
+        self.assertIn("=== Calculadora de Prueba ===", output)
+        self.assertIn("5 + 3 = 8", output)
+        self.assertIn("10 - 4 = 6", output)
+        self.assertIn("6 * 7 = 42", output)
+        self.assertIn("15 / 3 = 5", output)
+        self.assertIn("2^8 = 256", output)
+        self.assertIn("√16 = 4", output)
 
 
 if __name__ == "__main__":

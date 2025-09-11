@@ -1,0 +1,149 @@
+name: 📋 Demo de Tokens y Contextos GitHub
+
+# Workflow de demostración para el examen GH-200
+# Muestra el uso de diferentes tokens y contextos de GitHub Actions
+
+on:
+  workflow_dispatch:  # Permite ejecución manual
+    inputs:
+      environment:
+        description: 'Entorno de destino'
+        required: true
+        default: 'development'
+        type: choice
+        options:
+        - development
+        - staging
+        - production
+      debug_mode:
+        description: 'Activar modo debug'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  info-gathering:
+    name: 🔍 Recopilación de Información
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Obtener todo el historial
+    
+    - name: 📊 Contexto Completo de GitHub
+      run: |
+        echo "🌟 === CONTEXTO GITHUB COMPLETO ==="
+        echo "Repository: ${{ github.repository }}"
+        echo "Repository Owner: ${{ github.repository_owner }}"
+        echo "Repository Name: ${{ github.event.repository.name }}"
+        echo "Repository URL: ${{ github.event.repository.html_url }}"
+        echo "Repository Default Branch: ${{ github.event.repository.default_branch }}"
+        echo ""
+        echo "🎯 === INFORMACIÓN DEL EVENTO ==="
+        echo "Event Name: ${{ github.event_name }}"
+        echo "Action: ${{ github.action }}"
+        echo "Actor: ${{ github.actor }}"
+        echo "Triggering Actor: ${{ github.triggering_actor }}"
+        echo ""
+        echo "🔗 === REFERENCIAS ==="
+        echo "Ref: ${{ github.ref }}"
+        echo "Ref Name: ${{ github.ref_name }}"
+        echo "Ref Type: ${{ github.ref_type }}"
+        echo "SHA: ${{ github.sha }}"
+        echo "Base Ref: ${{ github.base_ref }}"
+        echo "Head Ref: ${{ github.head_ref }}"
+        echo ""
+        echo "🏃 === INFORMACIÓN DEL RUNNER ==="
+        echo "Runner OS: ${{ runner.os }}"
+        echo "Runner Arch: ${{ runner.arch }}"
+        echo "Runner Name: ${{ runner.name }}"
+        echo "Runner Tool Cache: ${{ runner.tool_cache }}"
+        echo ""
+        echo "🔢 === NÚMEROS DE EJECUCIÓN ==="
+        echo "Run ID: ${{ github.run_id }}"
+        echo "Run Number: ${{ github.run_number }}"
+        echo "Run Attempt: ${{ github.run_attempt }}"
+        echo ""
+        echo "📝 === INPUTS DEL WORKFLOW ==="
+        echo "Environment: ${{ github.event.inputs.environment || inputs.environment }}"
+        echo "Debug Mode: ${{ github.event.inputs.debug_mode || inputs.debug_mode }}"
+    
+    - name: 🕐 Información de Tiempo
+      run: |
+        echo "⏰ === INFORMACIÓN TEMPORAL ==="
+        echo "Fecha actual: $(date)"
+        echo "Fecha UTC: $(date -u)"
+        echo "Timestamp Unix: $(date +%s)"
+        echo "ISO 8601: $(date -Iseconds)"
+    
+    - name: 📈 Estadísticas del Repositorio
+      run: |
+        echo "📊 === ESTADÍSTICAS DEL REPO ==="
+        echo "Total de commits: $(git rev-list --all --count)"
+        echo "Ramas locales: $(git branch -l | wc -l)"
+        echo "Último commit:"
+        git log -1 --pretty=format:"  Hash: %H%n  Autor: %an <%ae>%n  Fecha: %ad%n  Mensaje: %s" --date=iso
+        echo ""
+        echo ""
+        echo "Archivos en el directorio actual:"
+        ls -la
+    
+    - name: 🔐 Información de Seguridad (sin secretos)
+      run: |
+        echo "🔒 === INFORMACIÓN DE SEGURIDAD ==="
+        echo "GitHub Token presente: ${{ github.token != '' }}"
+        echo "Workspace: $GITHUB_WORKSPACE"
+        echo "Action Path: $GITHUB_ACTION_PATH"
+        echo "Event Path: $GITHUB_EVENT_PATH"
+        echo ""
+        echo "Variables de entorno GitHub (filtradas):"
+        env | grep GITHUB_ | grep -v TOKEN | sort
+    
+    - name: 🎯 Información Condicional
+      if: ${{ inputs.debug_mode == 'true' || github.event.inputs.debug_mode == 'true' }}
+      run: |
+        echo "🐛 === MODO DEBUG ACTIVADO ==="
+        echo "Contenido completo del evento GitHub:"
+        echo '${{ toJSON(github.event) }}' | jq '.'
+        echo ""
+        echo "Contexto completo de GitHub:"
+        echo '${{ toJSON(github) }}' | jq '.'
+    
+    - name: 📋 Crear Reporte de Información
+      run: |
+        cat > github-info-report.md << 'EOF'
+        # 📋 Reporte de Información GitHub Actions
+        
+        ## 🎯 Información del Workflow
+        - **Workflow**: ${{ github.workflow }}
+        - **Ejecutado por**: ${{ github.actor }}
+        - **Fecha**: $(date -Iseconds)
+        - **Entorno**: ${{ inputs.environment || 'N/A' }}
+        
+        ## 📝 Información del Commit
+        - **SHA**: `${{ github.sha }}`
+        - **Rama**: ${{ github.ref_name }}
+        - **Repositorio**: ${{ github.repository }}
+        
+        ## 🔢 Números de Ejecución
+        - **Run ID**: ${{ github.run_id }}
+        - **Run Number**: ${{ github.run_number }}
+        - **Attempt**: ${{ github.run_attempt }}
+        
+        ## 🔗 Enlaces Útiles
+        - [Ver Workflow](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+        - [Ver Commit](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+        - [Ver Repositorio](${{ github.server_url }}/${{ github.repository }})
+        
+        ---
+        *Generado automáticamente por GitHub Actions*
+        EOF
+    
+    - name: 📤 Subir Reporte como Artefacto
+      uses: actions/upload-artifact@v4
+      with:
+        name: github-info-report-${{ github.run_number }}
+        path: github-info-report.md
+        retention-days: 30

@@ -1,0 +1,74 @@
+name: Development - Validación Completa
+
+on:
+  push:
+    branches: [ development ]
+
+jobs:
+  validate:
+    name: Validación de Código
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: 🔍 Información del Desarrollo
+      run: |
+        echo "🛠️ === VALIDACIÓN EN DEVELOPMENT ==="
+        echo "👤 Desarrollador: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}" | cut -c1-8
+        echo "💬 Mensaje: ${{ github.event.head_commit.message }}"
+        echo "📅 Timestamp: ${{ github.event.head_commit.timestamp }}"
+        echo "🌿 Rama: ${{ github.ref_name }}"
+        echo ""
+        echo "📊 === ESTADÍSTICAS DEL COMMIT ==="
+        echo "➕ Archivos añadidos: ${{ github.event.head_commit.added }}"
+        echo "🔄 Archivos modificados: ${{ github.event.head_commit.modified }}"
+        echo "➖ Archivos eliminados: ${{ github.event.head_commit.removed }}"
+        echo ""
+        echo "🔗 Ver commit completo: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+    
+    - name: Configurar Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Instalar dependencias
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install bandit
+    
+    - name: Análisis de seguridad con Bandit
+      run: |
+        bandit -r . -f json -o bandit-report.json --exclude ./test_*.py || true
+        bandit -r . --exclude ./test_*.py || true
+    
+    - name: Ejecutar calculadora (smoke test)
+      run: |
+        python calculadora.py
+    
+    - name: Subir reportes de seguridad
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-reports
+        path: bandit-report.json
+        retention-days: 30
+
+  notify:
+    name: Notificación
+    runs-on: ubuntu-latest
+    needs: [validate]
+    if: always()
+    
+    steps:
+    - name: Notificar resultado
+      run: |
+        if [ "${{ needs.validate.result }}" == "success" ]; then
+          echo "✅ Validación exitosa en development"
+        else
+          echo "❌ Falló la validación en development"
+          exit 1
+        fi

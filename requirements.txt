@@ -5,10 +5,13 @@
 # Testing
 pytest>=7.0.0
 pytest-cov>=4.0.0
+coverage>=7.0.0
 
-# Linting y formateo
+# Linting
 flake8>=6.0.0
-black>=23.0.0
+
+# Seguridad
+bandit>=1.7.0
 
 # Documentación
 sphinx>=5.0.0
