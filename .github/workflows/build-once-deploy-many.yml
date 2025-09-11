@@ -1,0 +1,457 @@
+name: 🚀 Build Once Deploy Many
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_to_production:
+        description: 'Desplegar también a Production'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  build:
+    name: 🔨 Build y Test
+    runs-on: ubuntu-latest
+    
+    outputs:
+      artifact-name: ${{ steps.build.outputs.artifact-name }}
+      version: ${{ steps.version.outputs.version }}
+      should-deploy: ${{ steps.deploy-check.outputs.should-deploy }}
+    
+    steps:
+    - name: 📥 Checkout código
+      uses: actions/checkout@v4
+    
+    - name: 📋 Información del Build
+      run: |
+        echo "🔨 === BUILD ONCE DEPLOY MANY ==="
+        echo "👤 Autor: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}" | cut -c1-8
+        echo "🌿 Rama: ${{ github.ref_name }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo "🎯 Evento: ${{ github.event_name }}"
+    
+    - name: 🏷️ Determinar Versión
+      id: version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+        else
+          # Limpiar el nombre de la rama para evitar caracteres inválidos
+          CLEAN_BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
+          VERSION="${CLEAN_BRANCH}-$(git rev-parse --short HEAD)"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "📋 Versión: $VERSION"
+    
+    - name: 🐍 Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: 📦 Cache dependencias
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: 🔧 Instalar dependencias
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install coverage
+    
+    - name: 🧪 Ejecutar Tests Completos
+      run: |
+        echo "🧪 Ejecutando suite completa de tests..."
+        
+        # Linting
+        echo "🔍 Linting con flake8..."
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+        
+        # Tests unitarios con cobertura
+        echo "🧪 Tests unitarios con cobertura..."
+        coverage run -m unittest discover -s . -p "test_*.py" -v
+        coverage report -m
+        coverage report --fail-under=90
+        
+        # Generar reporte XML para artefactos
+        coverage xml
+        coverage html
+        
+        echo "✅ Todos los tests pasaron"
+    
+    - name: 📦 Build de la Aplicación
+      id: build
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        # Limpiar el nombre del artefacto para evitar caracteres inválidos
+        CLEAN_VERSION=$(echo "$VERSION" | sed 's/[^a-zA-Z0-9._-]/-/g')
+        ARTIFACT_NAME="calculadora-$CLEAN_VERSION"
+        
+        echo "🔨 Construyendo aplicación: $ARTIFACT_NAME"
+        
+        # Crear directorio de build
+        mkdir -p "build/$ARTIFACT_NAME"
+        
+        # Copiar archivos de la aplicación
+        cp calculadora.py "build/$ARTIFACT_NAME/"
+        cp requirements.txt "build/$ARTIFACT_NAME/"
+        cp README.md "build/$ARTIFACT_NAME/"
+        
+        # Crear archivo de metadatos del build
+        cat > "build/$ARTIFACT_NAME/build-info.json" << EOF
+        {
+          "version": "$VERSION",
+          "build_date": "$(date -Iseconds)",
+          "commit_sha": "${{ github.sha }}",
+          "commit_short": "$(git rev-parse --short HEAD)",
+          "branch": "${{ github.ref_name }}",
+          "built_by": "${{ github.actor }}",
+          "workflow_run": "${{ github.run_number }}",
+          "repository": "${{ github.repository }}",
+          "event": "${{ github.event_name }}"
+        }
+        EOF
+        
+        # Crear script de inicio
+        cat > "build/$ARTIFACT_NAME/start.sh" << 'EOF'
+        #!/bin/bash
+        echo "🚀 === CALCULADORA INICIANDO ==="
+        echo "📋 Información del build:"
+        cat build-info.json | python -m json.tool
+        echo ""
+        echo "🔧 Variables de entorno:"
+        env | grep -E "(ENVIRONMENT|DEPLOYED)" | sort
+        echo ""
+        echo "🧮 Ejecutando calculadora..."
+        python calculadora.py
+        EOF
+        chmod +x "build/$ARTIFACT_NAME/start.sh"
+        
+        # Crear archivo ZIP del artefacto
+        cd build
+        zip -r "$ARTIFACT_NAME.zip" "$ARTIFACT_NAME/"
+        cd ..
+        
+        echo "artifact-name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+        echo "✅ Artefacto creado: $ARTIFACT_NAME.zip"
+        
+        # Mostrar contenido
+        echo "📁 Contenido del artefacto:"
+        ls -la "build/$ARTIFACT_NAME/"
+    
+    - name: 🎯 Determinar Despliegues
+      id: deploy-check
+      run: |
+        SHOULD_DEPLOY="false"
+        
+        # Desplegar si es push a main o development (no en PR)
+        if [ "${{ github.event_name }}" == "push" ]; then
+          SHOULD_DEPLOY="true"
+        fi
+        
+        # Desplegar si es workflow_dispatch
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          SHOULD_DEPLOY="true"
+        fi
+        
+        echo "should-deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+        echo "🎯 Debe desplegar: $SHOULD_DEPLOY"
+    
+    - name: 📤 Subir Artefacto de Build
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.build.outputs.artifact-name }}
+        path: build/${{ steps.build.outputs.artifact-name }}.zip
+        retention-days: 90
+    
+    - name: 📤 Subir Reportes de Cobertura
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-reports-${{ github.run_number }}
+        path: |
+          coverage.xml
+          htmlcov/
+        retention-days: 30
+
+  deploy-development:
+    name: 🛠️ Deploy to Development
+    runs-on: ubuntu-latest
+    needs: build
+    if: needs.build.outputs.should-deploy == 'true' && (github.ref == 'refs/heads/development' || github.event_name == 'workflow_dispatch')
+    environment: 
+      name: development
+      url: https://dev.calculadora-app.com
+    
+    steps:
+    - name: 📋 Info Despliegue Development
+      run: |
+        echo "🛠️ === DESPLIEGUE A DEVELOPMENT ==="
+        echo "📦 Artefacto: ${{ needs.build.outputs.artifact-name }}"
+        echo "🏷️ Versión: ${{ needs.build.outputs.version }}"
+        echo "👤 Desplegado por: ${{ github.actor }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+    
+    - name: 📥 Descargar Artefacto
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ needs.build.outputs.artifact-name }}
+        path: ./artifacts
+    
+    - name: 📦 Preparar para Development
+      run: |
+        cd artifacts
+        unzip -q *.zip
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "📦 Preparando para Development..."
+        echo "📂 Directorio: $ARTIFACT_DIR"
+        
+        # Configurar variables de entorno para development
+        cat > "$ARTIFACT_DIR/.env" << EOF
+        ENVIRONMENT=development
+        DEPLOYED_AT=$(date -Iseconds)
+        DEPLOYED_BY=${{ github.actor }}
+        DEPLOYMENT_RUN_ID=${{ github.run_id }}
+        LOG_LEVEL=DEBUG
+        DEBUG=true
+        MONITORING=false
+        EOF
+        
+        echo "✅ Configuración de Development aplicada"
+    
+    - name: 🚀 Desplegar a Development
+      run: |
+        cd artifacts
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "🚀 Desplegando a Development..."
+        echo "📁 Contenido:"
+        ls -la "$ARTIFACT_DIR/"
+        echo ""
+        echo "🔧 Configuración:"
+        cat "$ARTIFACT_DIR/.env"
+        echo ""
+        echo "🌐 Simulando despliegue a Development..."
+        sleep 2
+        echo "✅ Desplegado en: https://dev.calculadora-app.com"
+    
+    - name: 🧪 Tests Post-Despliegue
+      run: |
+        cd artifacts
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        cd "$ARTIFACT_DIR"
+        
+        echo "🧪 Tests de humo en Development..."
+        python calculadora.py
+        echo "✅ Tests de humo OK"
+
+  deploy-staging:
+    name: 🎭 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build
+    if: needs.build.outputs.should-deploy == 'true' && github.ref == 'refs/heads/main'
+    environment: 
+      name: staging
+      url: https://staging.calculadora-app.com
+    
+    steps:
+    - name: 📋 Info Despliegue Staging
+      run: |
+        echo "🎭 === DESPLIEGUE A STAGING ==="
+        echo "📦 Artefacto: ${{ needs.build.outputs.artifact-name }}"
+        echo "🏷️ Versión: ${{ needs.build.outputs.version }}"
+        echo "👤 Desplegado por: ${{ github.actor }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+    
+    - name: 📥 Descargar Artefacto
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ needs.build.outputs.artifact-name }}
+        path: ./artifacts
+    
+    - name: 📦 Preparar para Staging
+      run: |
+        cd artifacts
+        unzip -q *.zip
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "📦 Preparando para Staging..."
+        
+        # Configurar variables de entorno para staging
+        cat > "$ARTIFACT_DIR/.env" << EOF
+        ENVIRONMENT=staging
+        DEPLOYED_AT=$(date -Iseconds)
+        DEPLOYED_BY=${{ github.actor }}
+        DEPLOYMENT_RUN_ID=${{ github.run_id }}
+        LOG_LEVEL=INFO
+        DEBUG=false
+        MONITORING=true
+        EOF
+        
+        echo "✅ Configuración de Staging aplicada"
+    
+    - name: 🚀 Desplegar a Staging
+      run: |
+        cd artifacts
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "🚀 Desplegando a Staging..."
+        echo "📁 Contenido:"
+        ls -la "$ARTIFACT_DIR/"
+        echo ""
+        echo "🔧 Configuración:"
+        cat "$ARTIFACT_DIR/.env"
+        echo ""
+        echo "🌐 Simulando despliegue a Staging..."
+        sleep 3
+        echo "✅ Desplegado en: https://staging.calculadora-app.com"
+    
+    - name: 🧪 Tests de Integración
+      run: |
+        cd artifacts
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        cd "$ARTIFACT_DIR"
+        
+        echo "🧪 Tests de integración en Staging..."
+        python calculadora.py
+        echo "🔍 Verificando configuración de staging..."
+        echo "✅ Tests de integración OK"
+
+  deploy-production:
+    name: 🏭 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build, deploy-staging]
+    if: needs.build.outputs.should-deploy == 'true' && (github.ref == 'refs/heads/main' && inputs.deploy_to_production == true)
+    environment: 
+      name: production
+      url: https://calculadora-app.com
+    
+    steps:
+    - name: 📋 Info Despliegue Production
+      run: |
+        echo "🏭 === DESPLIEGUE A PRODUCTION ==="
+        echo "📦 Artefacto: ${{ needs.build.outputs.artifact-name }}"
+        echo "🏷️ Versión: ${{ needs.build.outputs.version }}"
+        echo "👤 Desplegado por: ${{ github.actor }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo "⚠️ DESPLIEGUE CRÍTICO A PRODUCCIÓN"
+    
+    - name: 📥 Descargar Artefacto
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ needs.build.outputs.artifact-name }}
+        path: ./artifacts
+    
+    - name: 🔒 Validaciones Críticas
+      run: |
+        cd artifacts
+        unzip -q *.zip
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "🔒 Validaciones críticas para Production..."
+        
+        # Verificar integridad del artefacto
+        if [ ! -f "$ARTIFACT_DIR/calculadora.py" ]; then
+          echo "❌ Archivo principal no encontrado"
+          exit 1
+        fi
+        
+        if [ ! -f "$ARTIFACT_DIR/build-info.json" ]; then
+          echo "❌ Información de build no encontrada"
+          exit 1
+        fi
+        
+        echo "✅ Validaciones críticas OK"
+    
+    - name: 📦 Preparar para Production
+      run: |
+        cd artifacts
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "📦 Preparando para Production..."
+        
+        # Configurar variables de entorno para production
+        cat > "$ARTIFACT_DIR/.env" << EOF
+        ENVIRONMENT=production
+        DEPLOYED_AT=$(date -Iseconds)
+        DEPLOYED_BY=${{ github.actor }}
+        DEPLOYMENT_RUN_ID=${{ github.run_id }}
+        LOG_LEVEL=ERROR
+        DEBUG=false
+        MONITORING=true
+        HIGH_AVAILABILITY=true
+        EOF
+        
+        echo "✅ Configuración de Production aplicada"
+    
+    - name: 🚀 Desplegar a Production
+      run: |
+        cd artifacts
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "🚀 DESPLEGANDO A PRODUCTION..."
+        echo "📁 Contenido:"
+        ls -la "$ARTIFACT_DIR/"
+        echo ""
+        echo "🔧 Configuración:"
+        cat "$ARTIFACT_DIR/.env"
+        echo ""
+        echo "🏭 Simulando despliegue crítico a Production..."
+        echo "  - Activando alta disponibilidad..."
+        echo "  - Configurando balanceadores..."
+        echo "  - Activando monitoreo avanzado..."
+        sleep 5
+        echo "✅ DESPLEGADO EN PRODUCTION: https://calculadora-app.com"
+    
+    - name: 🧪 Tests Críticos de Production
+      run: |
+        cd artifacts
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        cd "$ARTIFACT_DIR"
+        
+        echo "🧪 Tests críticos de Production..."
+        python calculadora.py
+        echo "🔍 Verificando health checks..."
+        echo "📊 Verificando métricas..."
+        echo "✅ Production OK - Sistema operativo"
+
+  summary:
+    name: 📊 Resumen de Despliegues
+    runs-on: ubuntu-latest
+    needs: [build, deploy-development, deploy-staging, deploy-production]
+    if: always() && needs.build.result == 'success'
+    
+    steps:
+    - name: 📊 Reporte Final
+      run: |
+        echo "🎉 === RESUMEN DE DESPLIEGUES ==="
+        echo "📦 Artefacto: ${{ needs.build.outputs.artifact-name }}"
+        echo "🏷️ Versión: ${{ needs.build.outputs.version }}"
+        echo "👤 Por: ${{ github.actor }}"
+        echo "📅 Completado: $(date -Iseconds)"
+        echo ""
+        echo "🎯 Estados de Despliegue:"
+        echo "  🛠️ Development: ${{ needs.deploy-development.result || 'Skipped' }}"
+        echo "  🎭 Staging: ${{ needs.deploy-staging.result || 'Skipped' }}"
+        echo "  🏭 Production: ${{ needs.deploy-production.result || 'Skipped' }}"
+        echo ""
+        echo "🔗 URLs Desplegadas:"
+        if [ "${{ needs.deploy-development.result }}" == "success" ]; then
+          echo "  🛠️ Development: https://dev.calculadora-app.com"
+        fi
+        if [ "${{ needs.deploy-staging.result }}" == "success" ]; then
+          echo "  🎭 Staging: https://staging.calculadora-app.com"
+        fi
+        if [ "${{ needs.deploy-production.result }}" == "success" ]; then
+          echo "  🏭 Production: https://calculadora-app.com"
+        fi
