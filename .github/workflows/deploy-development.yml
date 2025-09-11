@@ -1,66 +1,82 @@
 name: 🚀 Deploy to Development
 
 on:
-  push:
+  workflow_run:
+    workflows: ["🔨 Build and Test"]
+    types:
+      - completed
     branches: [ development ]
-  workflow_dispatch:  # Permite ejecución manual
+  workflow_dispatch:
+    inputs:
+      artifact_name:
+        description: 'Nombre del artefacto a desplegar'
+        required: false
+        type: string
 
 jobs:
   deploy-dev:
     name: 🛠️ Despliegue a Development
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     environment: 
       name: development
-      url: https://dev.calculadora-app.com  # URL simulada
+      url: https://dev.calculadora-app.com
     
     steps:
-    - name: Checkout código
-      uses: actions/checkout@v4
-    
     - name: 📋 Información del Despliegue
       run: |
         echo "🚀 === DESPLIEGUE A DEVELOPMENT ==="
         echo "👤 Desplegado por: ${{ github.actor }}"
-        echo "🆔 Commit: ${{ github.sha }}" | cut -c1-8
-        echo "🌿 Rama: ${{ github.ref_name }}"
+        echo "🆔 Workflow Run: ${{ github.event.workflow_run.id || 'Manual' }}"
         echo "📅 Fecha: $(date -Iseconds)"
         echo "🎯 Entorno: Development"
         echo "🔗 URL: https://dev.calculadora-app.com"
     
-    - name: Configurar Python
-      uses: actions/setup-python@v5
+    - name: 📥 Descargar Artefacto de Build
+      uses: actions/download-artifact@v4
       with:
-        python-version: '3.11'
+        name: ${{ inputs.artifact_name || format('calculadora-development-{0}', github.sha) }}
+        path: ./artifacts
+        run-id: ${{ github.event.workflow_run.id }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
     
-    - name: Instalar dependencias
+    - name: 📦 Extraer y Preparar Artefacto
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        echo "📦 Extrayendo artefacto para Development..."
+        cd artifacts
+        
+        # Buscar el archivo ZIP
+        ARTIFACT_ZIP=$(find . -name "*.zip" | head -1)
+        if [ -n "$ARTIFACT_ZIP" ]; then
+          echo "📁 Encontrado artefacto: $ARTIFACT_ZIP"
+          unzip -q "$ARTIFACT_ZIP"
+          ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+          echo "📂 Directorio extraído: $ARTIFACT_DIR"
+          
+          # Mostrar información del build
+          echo "📋 Información del build:"
+          cat "$ARTIFACT_DIR/build-info.json" | python3 -m json.tool
+          
+          # Configurar para development
+          echo "ENVIRONMENT=development" >> "$ARTIFACT_DIR/.env"
+          echo "DEPLOYED_AT=$(date -Iseconds)" >> "$ARTIFACT_DIR/.env"
+          echo "DEPLOYED_BY=${{ github.actor }}" >> "$ARTIFACT_DIR/.env"
+        else
+          echo "❌ No se encontró artefacto ZIP"
+          exit 1
+        fi
     
-    - name: 🧪 Tests rápidos pre-despliegue
+    - name: 🚀 Desplegar a Development
       run: |
-        echo "Ejecutando tests críticos antes del despliegue..."
-        python -m unittest test_calculadora.TestCalculadora.test_sumar -v
-        python -m unittest test_calculadora.TestCalculadora.test_dividir_por_cero -v
-    
-    - name: 📦 Simular Build de la Aplicación
-      run: |
-        echo "🔨 Construyendo aplicación para Development..."
-        mkdir -p dist
-        cp calculadora.py dist/
-        echo "VERSION=$(git rev-parse --short HEAD)" > dist/.env
-        echo "ENVIRONMENT=development" >> dist/.env
-        echo "BUILD_DATE=$(date -Iseconds)" >> dist/.env
-        echo "✅ Build completado"
-    
-    - name: 🚀 Simular Despliegue
-      run: |
+        cd artifacts
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
         echo "🚀 Desplegando a Development..."
         echo "📁 Contenido a desplegar:"
-        ls -la dist/
+        ls -la "$ARTIFACT_DIR/"
         echo ""
         echo "🔧 Configuración del entorno:"
-        cat dist/.env
+        cat "$ARTIFACT_DIR/.env" 2>/dev/null || echo "No hay archivo .env"
         echo ""
         echo "🌐 Simulando despliegue a servidor de desarrollo..."
         sleep 2
@@ -69,7 +85,11 @@ jobs:
     
     - name: 🧪 Tests de Humo Post-Despliegue
       run: |
+        cd artifacts
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
         echo "🧪 Ejecutando tests de humo..."
+        cd "$ARTIFACT_DIR"
         python calculadora.py
         echo "✅ Tests de humo pasaron correctamente"
     
