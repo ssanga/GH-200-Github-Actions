@@ -1,0 +1,189 @@
+name: 🔨 Build and Test
+
+on:
+  push:
+    branches: [ development, main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    name: Tests Unitarios y Cobertura
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, '3.10', '3.11']
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: 📋 Información del Commit y Contexto
+      run: |
+        echo "🚀 === INFORMACIÓN DEL WORKFLOW ==="
+        echo "📅 Fecha y hora: $(date)"
+        echo "🏃 Runner: ${{ runner.os }} - ${{ runner.arch }}"
+        echo "🐍 Python version: ${{ matrix.python-version }}"
+        echo ""
+        echo "📝 === INFORMACIÓN DEL COMMIT ==="
+        echo "👤 Autor: ${{ github.actor }}"
+        echo "📧 Email del commit: ${{ github.event.head_commit.author.email }}"
+        echo "🆔 SHA del commit: ${{ github.sha }}"
+        echo "🔗 SHA corto: ${{ github.sha }}" | cut -c1-8
+        echo "💬 Mensaje: ${{ github.event.head_commit.message }}"
+        echo "🌿 Rama: ${{ github.ref_name }}"
+        echo "📦 Repositorio: ${{ github.repository }}"
+    
+    - name: Configurar Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache dependencias pip
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+    
+    - name: Instalar dependencias
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install coverage
+    
+    - name: Ejecutar linting con flake8
+      run: |
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    
+    - name: Ejecutar tests con cobertura
+      run: |
+        coverage run -m unittest discover -s . -p "test_*.py" -v
+        coverage report -m
+        coverage xml
+    
+    - name: Verificar cobertura mínima
+      run: |
+        coverage report --fail-under=90
+    
+    - name: Subir cobertura a Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+    
+    - name: Generar reporte HTML de cobertura
+      run: |
+        coverage html
+    
+    - name: Subir artefactos de cobertura
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-${{ matrix.python-version }}
+        path: htmlcov/
+        retention-days: 30
+
+  build:
+    name: 📦 Build Artefacto
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development' || startsWith(github.ref, 'refs/tags/v')
+    
+    outputs:
+      artifact-name: ${{ steps.build.outputs.artifact-name }}
+      version: ${{ steps.version.outputs.version }}
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: 🏷️ Determinar Versión
+      id: version
+      run: |
+        if [[ $GITHUB_REF == refs/tags/* ]]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+        else
+          VERSION="${{ github.ref_name }}-$(git rev-parse --short HEAD)"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "📋 Versión: $VERSION"
+    
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: 📦 Crear Artefacto de Aplicación
+      id: build
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        ARTIFACT_NAME="calculadora-$VERSION"
+        
+        echo "🔨 Construyendo artefacto: $ARTIFACT_NAME"
+        
+        # Crear directorio de build
+        mkdir -p build/$ARTIFACT_NAME
+        
+        # Copiar archivos de la aplicación
+        cp calculadora.py build/$ARTIFACT_NAME/
+        cp requirements.txt build/$ARTIFACT_NAME/
+        cp README.md build/$ARTIFACT_NAME/
+        
+        # Crear archivo de metadatos
+        cat > build/$ARTIFACT_NAME/build-info.json << EOF
+        {
+          "version": "$VERSION",
+          "build_date": "$(date -Iseconds)",
+          "commit_sha": "${{ github.sha }}",
+          "branch": "${{ github.ref_name }}",
+          "built_by": "${{ github.actor }}",
+          "workflow_run": "${{ github.run_number }}",
+          "repository": "${{ github.repository }}"
+        }
+        EOF
+        
+        # Crear script de inicio
+        cat > build/$ARTIFACT_NAME/start.sh << 'EOF'
+        #!/bin/bash
+        echo "🚀 Iniciando Calculadora..."
+        echo "📋 Información del build:"
+        cat build-info.json | python -m json.tool
+        echo ""
+        python calculadora.py
+        EOF
+        chmod +x build/$ARTIFACT_NAME/start.sh
+        
+        # Crear archivo ZIP del artefacto
+        cd build
+        zip -r $ARTIFACT_NAME.zip $ARTIFACT_NAME/
+        cd ..
+        
+        echo "artifact-name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+        echo "✅ Artefacto creado: $ARTIFACT_NAME.zip"
+        
+        # Mostrar contenido
+        echo "📁 Contenido del artefacto:"
+        ls -la build/$ARTIFACT_NAME/
+    
+    - name: 📤 Subir Artefacto de Build
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.build.outputs.artifact-name }}
+        path: build/${{ steps.build.outputs.artifact-name }}.zip
+        retention-days: 90
+    
+    - name: 📊 Información del Build
+      run: |
+        echo "📦 === BUILD COMPLETADO ==="
+        echo "🏷️ Versión: ${{ steps.version.outputs.version }}"
+        echo "📦 Artefacto: ${{ steps.build.outputs.artifact-name }}"
+        echo "👤 Construido por: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo ""
+        echo "✅ Artefacto listo para despliegue en todos los entornos"

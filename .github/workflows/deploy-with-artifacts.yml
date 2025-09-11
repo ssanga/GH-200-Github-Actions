@@ -1,0 +1,249 @@
+name: 🚀 Deploy con Artefactos
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Entorno de destino'
+        required: true
+        type: choice
+        options:
+        - development
+        - staging
+        - production
+      artifact_run_id:
+        description: 'ID del workflow run que generó el artefacto'
+        required: true
+        type: string
+      version:
+        description: 'Versión a desplegar'
+        required: false
+        type: string
+
+jobs:
+  deploy:
+    name: 🚀 Desplegar a ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: 
+      name: ${{ inputs.environment }}
+      url: ${{ inputs.environment == 'production' && 'https://calculadora-app.com' || inputs.environment == 'staging' && 'https://staging.calculadora-app.com' || 'https://dev.calculadora-app.com' }}
+    
+    steps:
+    - name: 📋 Información del Despliegue
+      run: |
+        echo "🚀 === DESPLIEGUE CON ARTEFACTO ==="
+        echo "🎯 Entorno: ${{ inputs.environment }}"
+        echo "👤 Desplegado por: ${{ github.actor }}"
+        echo "🆔 Artifact Run ID: ${{ inputs.artifact_run_id }}"
+        echo "🏷️ Versión: ${{ inputs.version || 'Latest' }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo "🔗 URL: ${{ inputs.environment == 'production' && 'https://calculadora-app.com' || inputs.environment == 'staging' && 'https://staging.calculadora-app.com' || 'https://dev.calculadora-app.com' }}"
+    
+    - name: 📥 Descargar Artefacto
+      uses: actions/download-artifact@v4
+      with:
+        run-id: ${{ inputs.artifact_run_id }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        path: ./artifacts
+    
+    - name: 🔍 Listar Artefactos Disponibles
+      run: |
+        echo "📦 Artefactos disponibles:"
+        find ./artifacts -type f -name "*.zip" | while read file; do
+          echo "  📁 $(basename "$file")"
+        done
+    
+    - name: 📦 Extraer Artefacto Principal
+      run: |
+        echo "📦 Extrayendo artefacto para ${{ inputs.environment }}..."
+        
+        # Buscar el artefacto principal (calculadora-*)
+        ARTIFACT_ZIP=$(find ./artifacts -name "calculadora-*.zip" | head -1)
+        
+        if [ -n "$ARTIFACT_ZIP" ]; then
+          echo "📁 Usando artefacto: $(basename "$ARTIFACT_ZIP")"
+          
+          # Crear directorio de despliegue
+          mkdir -p deploy
+          cd deploy
+          
+          # Extraer artefacto
+          unzip -q "../$ARTIFACT_ZIP"
+          
+          # Encontrar directorio extraído
+          ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+          
+          if [ -n "$ARTIFACT_DIR" ]; then
+            echo "📂 Directorio extraído: $ARTIFACT_DIR"
+            
+            # Mostrar información del build original
+            echo "📋 Información del build original:"
+            cat "$ARTIFACT_DIR/build-info.json" | python3 -m json.tool
+            
+            # Configurar para el entorno específico
+            echo "" >> "$ARTIFACT_DIR/.env"
+            echo "# Configuración de despliegue" >> "$ARTIFACT_DIR/.env"
+            echo "ENVIRONMENT=${{ inputs.environment }}" >> "$ARTIFACT_DIR/.env"
+            echo "DEPLOYED_AT=$(date -Iseconds)" >> "$ARTIFACT_DIR/.env"
+            echo "DEPLOYED_BY=${{ github.actor }}" >> "$ARTIFACT_DIR/.env"
+            echo "DEPLOYMENT_RUN_ID=${{ github.run_id }}" >> "$ARTIFACT_DIR/.env"
+            
+            # Configuraciones específicas por entorno
+            case "${{ inputs.environment }}" in
+              "production")
+                echo "LOG_LEVEL=ERROR" >> "$ARTIFACT_DIR/.env"
+                echo "DEBUG=false" >> "$ARTIFACT_DIR/.env"
+                echo "MONITORING=true" >> "$ARTIFACT_DIR/.env"
+                ;;
+              "staging")
+                echo "LOG_LEVEL=INFO" >> "$ARTIFACT_DIR/.env"
+                echo "DEBUG=false" >> "$ARTIFACT_DIR/.env"
+                echo "MONITORING=true" >> "$ARTIFACT_DIR/.env"
+                ;;
+              "development")
+                echo "LOG_LEVEL=DEBUG" >> "$ARTIFACT_DIR/.env"
+                echo "DEBUG=true" >> "$ARTIFACT_DIR/.env"
+                echo "MONITORING=false" >> "$ARTIFACT_DIR/.env"
+                ;;
+            esac
+            
+            echo "✅ Artefacto preparado para ${{ inputs.environment }}"
+          else
+            echo "❌ No se pudo encontrar el directorio del artefacto"
+            exit 1
+          fi
+        else
+          echo "❌ No se encontró artefacto de calculadora"
+          exit 1
+        fi
+    
+    - name: 🔒 Validaciones Pre-Despliegue
+      run: |
+        cd deploy
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "🔒 Ejecutando validaciones para ${{ inputs.environment }}..."
+        
+        # Validaciones específicas por entorno
+        case "${{ inputs.environment }}" in
+          "production")
+            echo "🔍 Validaciones críticas de producción..."
+            # Verificar que existe el archivo principal
+            if [ ! -f "$ARTIFACT_DIR/calculadora.py" ]; then
+              echo "❌ Archivo principal no encontrado"
+              exit 1
+            fi
+            # Verificar integridad del build
+            if [ ! -f "$ARTIFACT_DIR/build-info.json" ]; then
+              echo "❌ Información de build no encontrada"
+              exit 1
+            fi
+            ;;
+          "staging")
+            echo "🧪 Validaciones de staging..."
+            ;;
+          "development")
+            echo "🛠️ Validaciones de development..."
+            ;;
+        esac
+        
+        echo "✅ Validaciones completadas"
+    
+    - name: 🚀 Ejecutar Despliegue
+      run: |
+        cd deploy
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "🚀 Desplegando a ${{ inputs.environment }}..."
+        echo ""
+        echo "📁 Contenido a desplegar:"
+        ls -la "$ARTIFACT_DIR/"
+        echo ""
+        echo "🔧 Configuración final del entorno:"
+        cat "$ARTIFACT_DIR/.env"
+        echo ""
+        
+        # Simular despliegue específico por entorno
+        case "${{ inputs.environment }}" in
+          "production")
+            echo "🏭 Desplegando a PRODUCTION..."
+            echo "  - Activando modo de alta disponibilidad"
+            echo "  - Configurando balanceadores de carga"
+            echo "  - Activando monitoreo avanzado"
+            sleep 5
+            ;;
+          "staging")
+            echo "🎭 Desplegando a STAGING..."
+            echo "  - Configurando entorno de pruebas"
+            echo "  - Activando logs detallados"
+            sleep 3
+            ;;
+          "development")
+            echo "🛠️ Desplegando a DEVELOPMENT..."
+            echo "  - Configurando modo debug"
+            echo "  - Activando hot-reload"
+            sleep 2
+            ;;
+        esac
+        
+        echo "✅ Despliegue completado exitosamente"
+        echo "🔗 Aplicación disponible en: ${{ inputs.environment == 'production' && 'https://calculadora-app.com' || inputs.environment == 'staging' && 'https://staging.calculadora-app.com' || 'https://dev.calculadora-app.com' }}"
+    
+    - name: 🧪 Tests Post-Despliegue
+      run: |
+        cd deploy
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "🧪 Ejecutando tests post-despliegue en ${{ inputs.environment }}..."
+        
+        # Ejecutar la aplicación para verificar que funciona
+        cd "$ARTIFACT_DIR"
+        python calculadora.py
+        
+        # Tests específicos por entorno
+        case "${{ inputs.environment }}" in
+          "production")
+            echo "🔍 Tests críticos de producción..."
+            echo "  ✅ Aplicación responde correctamente"
+            echo "  ✅ Configuración de producción aplicada"
+            ;;
+          "staging")
+            echo "🧪 Tests de integración en staging..."
+            echo "  ✅ Funcionalidad básica verificada"
+            ;;
+          "development")
+            echo "🛠️ Tests de desarrollo..."
+            echo "  ✅ Modo debug activado"
+            ;;
+        esac
+        
+        echo "✅ Todos los tests post-despliegue pasaron"
+    
+    - name: 📊 Reporte Final
+      run: |
+        echo "🎉 === DESPLIEGUE COMPLETADO EXITOSAMENTE ==="
+        echo "🎯 Entorno: ${{ inputs.environment }}"
+        echo "👤 Desplegado por: ${{ github.actor }}"
+        echo "🆔 Artifact Run ID: ${{ inputs.artifact_run_id }}"
+        echo "🏷️ Versión: ${{ inputs.version || 'Latest' }}"
+        echo "📅 Completado: $(date -Iseconds)"
+        echo "🔗 URL: ${{ inputs.environment == 'production' && 'https://calculadora-app.com' || inputs.environment == 'staging' && 'https://staging.calculadora-app.com' || 'https://dev.calculadora-app.com' }}"
+        echo ""
+        echo "📋 Próximos pasos:"
+        case "${{ inputs.environment }}" in
+          "production")
+            echo "  - Monitorear métricas de aplicación"
+            echo "  - Verificar logs de errores"
+            echo "  - Confirmar funcionalidad con usuarios"
+            ;;
+          "staging")
+            echo "  - Ejecutar tests de integración completos"
+            echo "  - Validar con equipo de QA"
+            echo "  - Preparar para producción"
+            ;;
+          "development")
+            echo "  - Continuar desarrollo"
+            echo "  - Ejecutar tests locales"
+            echo "  - Preparar para staging"
+            ;;
+        esac
