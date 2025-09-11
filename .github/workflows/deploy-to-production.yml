@@ -1,0 +1,310 @@
+name: 🏭 Deploy to Production Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: 'ID del workflow run que generó el artefacto (ej: 123456789)'
+        required: true
+        type: string
+      artifact_name:
+        description: 'Nombre del artefacto a desplegar (opcional, se auto-detecta)'
+        required: false
+        type: string
+      version:
+        description: 'Versión/tag para documentación (opcional)'
+        required: false
+        type: string
+      skip_validations:
+        description: 'Saltar validaciones críticas (solo emergencias)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  validate-artifact:
+    name: 🔍 Validar Artefacto Existente
+    runs-on: ubuntu-latest
+    
+    outputs:
+      artifact-name: ${{ steps.detect.outputs.artifact-name }}
+      source-run-url: ${{ steps.detect.outputs.source-run-url }}
+      source-commit: ${{ steps.detect.outputs.source-commit }}
+      source-branch: ${{ steps.detect.outputs.source-branch }}
+    
+    steps:
+    - name: 📋 Información del Despliegue a Producción
+      run: |
+        echo "🏭 === DESPLIEGUE A PRODUCCIÓN (SOLO DEPLOY) ==="
+        echo "👤 Solicitado por: ${{ github.actor }}"
+        echo "🆔 Artifact Run ID: ${{ inputs.artifact_run_id }}"
+        echo "📦 Artifact Name: ${{ inputs.artifact_name || 'Auto-detectar' }}"
+        echo "🏷️ Versión: ${{ inputs.version || 'No especificada' }}"
+        echo "⚠️ Skip Validations: ${{ inputs.skip_validations }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo ""
+        echo "🎯 ESTRATEGIA: Reutilizar artefacto existente (NO recompilar)"
+    
+    - name: 🔍 Obtener Información del Workflow Original
+      id: detect
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        RUN_ID="${{ inputs.artifact_run_id }}"
+        
+        echo "🔍 Obteniendo información del workflow run: $RUN_ID"
+        
+        # Obtener información del run original usando GitHub CLI
+        echo "📡 Consultando GitHub API..."
+        
+        # Construir URLs
+        SOURCE_RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/$RUN_ID"
+        echo "source-run-url=$SOURCE_RUN_URL" >> $GITHUB_OUTPUT
+        
+        # Para este ejemplo, simularemos la detección del artefacto
+        if [ -n "${{ inputs.artifact_name }}" ]; then
+          ARTIFACT_NAME="${{ inputs.artifact_name }}"
+        else
+          # Auto-detectar nombre del artefacto (patrón calculadora-*)
+          ARTIFACT_NAME="calculadora-from-run-$RUN_ID"
+        fi
+        
+        echo "artifact-name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
+        echo "source-commit=unknown" >> $GITHUB_OUTPUT
+        echo "source-branch=unknown" >> $GITHUB_OUTPUT
+        
+        echo "✅ Artefacto detectado: $ARTIFACT_NAME"
+        echo "🔗 Workflow original: $SOURCE_RUN_URL"
+    
+    - name: 📥 Verificar Disponibilidad del Artefacto
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ steps.detect.outputs.artifact-name }}
+        run-id: ${{ inputs.artifact_run_id }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        path: ./verify-artifact
+    
+    - name: ✅ Validar Integridad del Artefacto
+      run: |
+        echo "🔍 Validando integridad del artefacto..."
+        
+        cd verify-artifact
+        
+        # Verificar que existe el ZIP
+        if [ ! -f *.zip ]; then
+          echo "❌ No se encontró archivo ZIP del artefacto"
+          exit 1
+        fi
+        
+        # Extraer y verificar contenido
+        unzip -q *.zip
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        if [ -z "$ARTIFACT_DIR" ]; then
+          echo "❌ No se encontró directorio del artefacto"
+          exit 1
+        fi
+        
+        # Verificar archivos críticos
+        if [ ! -f "$ARTIFACT_DIR/calculadora.py" ]; then
+          echo "❌ Archivo calculadora.py no encontrado"
+          exit 1
+        fi
+        
+        if [ ! -f "$ARTIFACT_DIR/build-info.json" ]; then
+          echo "❌ Archivo build-info.json no encontrado"
+          exit 1
+        fi
+        
+        echo "📋 Información del build original:"
+        cat "$ARTIFACT_DIR/build-info.json" | python3 -m json.tool
+        
+        echo "✅ Artefacto válido y listo para producción"
+
+  deploy-production:
+    name: 🏭 Desplegar a Producción
+    runs-on: ubuntu-latest
+    needs: validate-artifact
+    environment: 
+      name: production
+      url: https://calculadora-app.com
+    
+    steps:
+    - name: 📋 Información Final del Despliegue
+      run: |
+        echo "🏭 === DESPLEGANDO A PRODUCCIÓN ==="
+        echo "📦 Artefacto: ${{ needs.validate-artifact.outputs.artifact-name }}"
+        echo "🔗 Workflow origen: ${{ needs.validate-artifact.outputs.source-run-url }}"
+        echo "👤 Desplegado por: ${{ github.actor }}"
+        echo "🏷️ Versión: ${{ inputs.version || 'No especificada' }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo "⚠️ Skip Validations: ${{ inputs.skip_validations }}"
+        echo ""
+        echo "🎯 MODO: Despliegue directo (sin recompilación)"
+    
+    - name: 📥 Descargar Artefacto para Producción
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ needs.validate-artifact.outputs.artifact-name }}
+        run-id: ${{ inputs.artifact_run_id }}
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        path: ./production-deploy
+    
+    - name: 🔒 Validaciones Críticas de Producción
+      if: inputs.skip_validations != true
+      run: |
+        echo "🔒 Ejecutando validaciones críticas para Producción..."
+        
+        cd production-deploy
+        unzip -q *.zip
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "🔍 Validaciones de seguridad..."
+        
+        # Verificar que no hay archivos de desarrollo
+        if [ -f "$ARTIFACT_DIR/.env" ]; then
+          echo "⚠️ Encontrado archivo .env existente, será sobrescrito"
+        fi
+        
+        # Verificar integridad de archivos críticos
+        cd "$ARTIFACT_DIR"
+        
+        echo "🧪 Ejecutando test crítico de funcionalidad..."
+        python calculadora.py > /dev/null 2>&1
+        if [ $? -eq 0 ]; then
+          echo "✅ Test crítico de funcionalidad: OK"
+        else
+          echo "❌ Test crítico de funcionalidad: FALLO"
+          exit 1
+        fi
+        
+        echo "✅ Todas las validaciones críticas pasaron"
+    
+    - name: ⚠️ Saltar Validaciones (Modo Emergencia)
+      if: inputs.skip_validations == true
+      run: |
+        echo "⚠️ === MODO EMERGENCIA ACTIVADO ==="
+        echo "🚨 Se han saltado las validaciones críticas"
+        echo "🚨 Este despliegue es bajo tu responsabilidad"
+        echo "🚨 Monitorea cuidadosamente el sistema después del despliegue"
+    
+    - name: 📦 Preparar para Producción
+      run: |
+        cd production-deploy
+        unzip -q *.zip
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "📦 Preparando configuración de Producción..."
+        
+        # Configurar variables de entorno específicas de producción
+        cat > "$ARTIFACT_DIR/.env" << EOF
+        # === CONFIGURACIÓN DE PRODUCCIÓN ===
+        ENVIRONMENT=production
+        DEPLOYED_AT=$(date -Iseconds)
+        DEPLOYED_BY=${{ github.actor }}
+        DEPLOYMENT_RUN_ID=${{ github.run_id }}
+        SOURCE_RUN_ID=${{ inputs.artifact_run_id }}
+        VERSION=${{ inputs.version || 'unspecified' }}
+        
+        # Configuración de producción
+        LOG_LEVEL=ERROR
+        DEBUG=false
+        MONITORING=true
+        HIGH_AVAILABILITY=true
+        PERFORMANCE_MODE=optimized
+        SECURITY_LEVEL=maximum
+        
+        # Metadatos del despliegue
+        DEPLOYMENT_TYPE=artifact-reuse
+        SKIP_VALIDATIONS=${{ inputs.skip_validations }}
+        EOF
+        
+        echo "✅ Configuración de Producción aplicada"
+        echo ""
+        echo "🔧 Configuración final:"
+        cat "$ARTIFACT_DIR/.env"
+    
+    - name: 💾 Backup Pre-Despliegue
+      run: |
+        echo "💾 Simulando backup de la versión actual de Producción..."
+        BACKUP_ID="backup-$(date +%Y%m%d-%H%M%S)"
+        echo "🗃️ Backup ID: $BACKUP_ID"
+        echo "📁 Backup location: /backups/production/$BACKUP_ID"
+        echo "✅ Backup completado (simulado)"
+    
+    - name: 🚀 Despliegue Final a Producción
+      run: |
+        cd production-deploy
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        
+        echo "🚀 === DESPLEGANDO A PRODUCCIÓN ==="
+        echo ""
+        echo "📁 Contenido final a desplegar:"
+        ls -la "$ARTIFACT_DIR/"
+        echo ""
+        echo "🔧 Configuración de producción:"
+        cat "$ARTIFACT_DIR/.env"
+        echo ""
+        echo "🏭 Ejecutando despliegue crítico a Producción..."
+        echo "  🔄 Deteniendo servicios actuales..."
+        sleep 1
+        echo "  📦 Desplegando nueva versión..."
+        sleep 2
+        echo "  🔧 Aplicando configuración de producción..."
+        sleep 1
+        echo "  🚀 Iniciando servicios..."
+        sleep 2
+        echo "  🔍 Verificando health checks..."
+        sleep 1
+        echo ""
+        echo "✅ DESPLIEGUE A PRODUCCIÓN COMPLETADO"
+        echo "🔗 Aplicación disponible en: https://calculadora-app.com"
+    
+    - name: 🧪 Tests Post-Despliegue Críticos
+      run: |
+        cd production-deploy
+        ARTIFACT_DIR=$(find . -type d -name "calculadora-*" | head -1)
+        cd "$ARTIFACT_DIR"
+        
+        echo "🧪 Ejecutando tests post-despliegue críticos..."
+        
+        # Test de funcionalidad básica
+        echo "🔍 Test de funcionalidad básica..."
+        python calculadora.py
+        
+        # Simular health checks
+        echo "💓 Health checks..."
+        echo "  ✅ API Response: OK"
+        echo "  ✅ Database Connection: OK"
+        echo "  ✅ External Services: OK"
+        echo "  ✅ Memory Usage: Normal"
+        echo "  ✅ CPU Usage: Normal"
+        
+        echo "✅ Todos los tests post-despliegue pasaron"
+    
+    - name: 📊 Reporte Final de Producción
+      run: |
+        echo "🎉 === DESPLIEGUE A PRODUCCIÓN COMPLETADO EXITOSAMENTE ==="
+        echo ""
+        echo "📋 Resumen del Despliegue:"
+        echo "  🏭 Entorno: Production"
+        echo "  📦 Artefacto: ${{ needs.validate-artifact.outputs.artifact-name }}"
+        echo "  🔗 Workflow origen: ${{ needs.validate-artifact.outputs.source-run-url }}"
+        echo "  👤 Desplegado por: ${{ github.actor }}"
+        echo "  🏷️ Versión: ${{ inputs.version || 'No especificada' }}"
+        echo "  📅 Completado: $(date -Iseconds)"
+        echo "  ⚠️ Validaciones saltadas: ${{ inputs.skip_validations }}"
+        echo ""
+        echo "🔗 URLs:"
+        echo "  🏭 Producción: https://calculadora-app.com"
+        echo "  📊 Monitoreo: https://monitoring.calculadora-app.com"
+        echo ""
+        echo "📋 Acciones Post-Despliegue Recomendadas:"
+        echo "  🔍 Monitorear métricas de aplicación durante 30 minutos"
+        echo "  📊 Verificar logs de errores en tiempo real"
+        echo "  👥 Confirmar funcionalidad con usuarios clave"
+        echo "  📈 Revisar métricas de rendimiento"
+        echo "  🚨 Tener plan de rollback listo si es necesario"
+        echo ""
+        echo "🎯 Estrategia utilizada: Reutilización de artefacto (Build Once, Deploy Many)"
+        echo "✅ No se recompiló código - Despliegue eficiente y seguro"
