@@ -42,7 +42,9 @@ jobs:
         if [[ $GITHUB_REF == refs/tags/* ]]; then
           VERSION=${GITHUB_REF#refs/tags/}
         else
-          VERSION="${{ github.ref_name }}-$(git rev-parse --short HEAD)"
+          # Limpiar el nombre de la rama para evitar caracteres inválidos
+          CLEAN_BRANCH=$(echo "${{ github.ref_name }}" | sed 's/[^a-zA-Z0-9._-]/-/g')
+          VERSION="${CLEAN_BRANCH}-$(git rev-parse --short HEAD)"
         fi
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "📋 Versión: $VERSION"
@@ -91,20 +93,22 @@ jobs:
       id: build
       run: |
         VERSION="${{ steps.version.outputs.version }}"
-        ARTIFACT_NAME="calculadora-$VERSION"
+        # Limpiar el nombre del artefacto para evitar caracteres inválidos
+        CLEAN_VERSION=$(echo "$VERSION" | sed 's/[^a-zA-Z0-9._-]/-/g')
+        ARTIFACT_NAME="calculadora-$CLEAN_VERSION"
         
         echo "🔨 Construyendo aplicación: $ARTIFACT_NAME"
         
         # Crear directorio de build
-        mkdir -p build/$ARTIFACT_NAME
+        mkdir -p "build/$ARTIFACT_NAME"
         
         # Copiar archivos de la aplicación
-        cp calculadora.py build/$ARTIFACT_NAME/
-        cp requirements.txt build/$ARTIFACT_NAME/
-        cp README.md build/$ARTIFACT_NAME/
+        cp calculadora.py "build/$ARTIFACT_NAME/"
+        cp requirements.txt "build/$ARTIFACT_NAME/"
+        cp README.md "build/$ARTIFACT_NAME/"
         
         # Crear archivo de metadatos del build
-        cat > build/$ARTIFACT_NAME/build-info.json << EOF
+        cat > "build/$ARTIFACT_NAME/build-info.json" << EOF
         {
           "version": "$VERSION",
           "build_date": "$(date -Iseconds)",
@@ -119,7 +123,7 @@ jobs:
         EOF
         
         # Crear script de inicio
-        cat > build/$ARTIFACT_NAME/start.sh << 'EOF'
+        cat > "build/$ARTIFACT_NAME/start.sh" << 'EOF'
         #!/bin/bash
         echo "🚀 === CALCULADORA INICIANDO ==="
         echo "📋 Información del build:"
@@ -131,11 +135,11 @@ jobs:
         echo "🧮 Ejecutando calculadora..."
         python calculadora.py
         EOF
-        chmod +x build/$ARTIFACT_NAME/start.sh
+        chmod +x "build/$ARTIFACT_NAME/start.sh"
         
         # Crear archivo ZIP del artefacto
         cd build
-        zip -r $ARTIFACT_NAME.zip $ARTIFACT_NAME/
+        zip -r "$ARTIFACT_NAME.zip" "$ARTIFACT_NAME/"
         cd ..
         
         echo "artifact-name=$ARTIFACT_NAME" >> $GITHUB_OUTPUT
@@ -143,7 +147,7 @@ jobs:
         
         # Mostrar contenido
         echo "📁 Contenido del artefacto:"
-        ls -la build/$ARTIFACT_NAME/
+        ls -la "build/$ARTIFACT_NAME/"
     
     - name: 🎯 Determinar Despliegues
       id: deploy-check
