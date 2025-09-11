@@ -20,6 +20,37 @@ jobs:
     - name: Checkout código
       uses: actions/checkout@v4
     
+    - name: 📋 Información del Commit y Contexto
+      run: |
+        echo "🚀 === INFORMACIÓN DEL WORKFLOW ==="
+        echo "📅 Fecha y hora: $(date)"
+        echo "🏃 Runner: ${{ runner.os }} - ${{ runner.arch }}"
+        echo "🐍 Python version: ${{ matrix.python-version }}"
+        echo ""
+        echo "📝 === INFORMACIÓN DEL COMMIT ==="
+        echo "👤 Autor: ${{ github.actor }}"
+        echo "📧 Email del commit: ${{ github.event.head_commit.author.email }}"
+        echo "🆔 SHA del commit: ${{ github.sha }}"
+        echo "🔗 SHA corto: ${{ github.sha }}" | cut -c1-8
+        echo "💬 Mensaje: ${{ github.event.head_commit.message }}"
+        echo "🌿 Rama: ${{ github.ref_name }}"
+        echo "📦 Repositorio: ${{ github.repository }}"
+        echo ""
+        echo "🔄 === INFORMACIÓN DEL EVENTO ==="
+        echo "🎯 Evento: ${{ github.event_name }}"
+        echo "🔢 Número de ejecución: ${{ github.run_number }}"
+        echo "🆔 ID de ejecución: ${{ github.run_id }}"
+        echo "🔄 Intento: ${{ github.run_attempt }}"
+        echo ""
+        echo "🔗 === ENLACES ÚTILES ==="
+        echo "📊 Workflow: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        echo "📝 Commit: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+        echo ""
+        echo "🌍 === VARIABLES DE ENTORNO ==="
+        echo "GITHUB_WORKSPACE: $GITHUB_WORKSPACE"
+        echo "GITHUB_ACTION: $GITHUB_ACTION"
+        echo "GITHUB_WORKFLOW: $GITHUB_WORKFLOW"
+    
     - name: Configurar Python ${{ matrix.python-version }}
       uses: actions/setup-python@v5
       with:
@@ -74,3 +105,25 @@ jobs:
     - name: Verificar cobertura mínima
       run: |
         coverage report --fail-under=90
+    
+    - name: 📊 Resumen Final del CI
+      if: always()
+      run: |
+        echo "✅ === RESUMEN DE EJECUCIÓN ==="
+        echo "🐍 Python ${{ matrix.python-version }} - Completado"
+        echo "👤 Ejecutado por: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}" | cut -c1-8
+        echo "🌿 Rama: ${{ github.ref_name }}"
+        echo "⏱️ Workflow: ${{ github.workflow }}"
+        echo "🔢 Ejecución #${{ github.run_number }}"
+        echo ""
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "🎉 Estado: ÉXITO ✅"
+        else
+          echo "❌ Estado: FALLO ❌"
+        fi
+        echo ""
+        echo "📈 Próximos pasos:"
+        echo "- Revisar artefactos de cobertura"
+        echo "- Verificar reportes de Codecov"
+        echo "- Continuar con el desarrollo"

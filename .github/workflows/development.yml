@@ -13,6 +13,22 @@ jobs:
     - name: Checkout código
       uses: actions/checkout@v4
     
+    - name: 🔍 Información del Desarrollo
+      run: |
+        echo "🛠️ === VALIDACIÓN EN DEVELOPMENT ==="
+        echo "👤 Desarrollador: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}" | cut -c1-8
+        echo "💬 Mensaje: ${{ github.event.head_commit.message }}"
+        echo "📅 Timestamp: ${{ github.event.head_commit.timestamp }}"
+        echo "🌿 Rama: ${{ github.ref_name }}"
+        echo ""
+        echo "📊 === ESTADÍSTICAS DEL COMMIT ==="
+        echo "➕ Archivos añadidos: ${{ github.event.head_commit.added }}"
+        echo "🔄 Archivos modificados: ${{ github.event.head_commit.modified }}"
+        echo "➖ Archivos eliminados: ${{ github.event.head_commit.removed }}"
+        echo ""
+        echo "🔗 Ver commit completo: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+    
     - name: Configurar Python 3.11
       uses: actions/setup-python@v5
       with:
