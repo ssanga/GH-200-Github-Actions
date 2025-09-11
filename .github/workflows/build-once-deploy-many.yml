@@ -8,10 +8,19 @@ on:
   workflow_dispatch:
     inputs:
       deploy_to_production:
-        description: 'Desplegar también a Production'
+        description: 'Desplegar también a Production (recompila todo)'
         required: false
         default: false
         type: boolean
+      environment_override:
+        description: 'Forzar despliegue a entorno específico'
+        required: false
+        type: choice
+        options:
+        - ''
+        - development
+        - staging
+        - production
 
 jobs:
   build:
@@ -455,3 +464,7 @@ jobs:
         if [ "${{ needs.deploy-production.result }}" == "success" ]; then
           echo "  🏭 Production: https://calculadora-app.com"
         fi
+        echo ""
+        echo "💡 Para despliegue a Production sin recompilar:"
+        echo "   Usa el workflow 'Deploy to Production Only'"
+        echo "   Run ID de este build: ${{ github.run_id }}"
