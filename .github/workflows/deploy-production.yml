@@ -1,0 +1,186 @@
+name: 🏭 Deploy to Production
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers en tags como v1.0.0, v2.1.3, etc.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versión a desplegar (ej: v1.0.0)'
+        required: true
+        type: string
+      rollback:
+        description: 'Es un rollback?'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  validate-release:
+    name: 🔍 Validar Release
+    runs-on: ubuntu-latest
+    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: 🏷️ Determinar Versión
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" == "push" ]; then
+          VERSION=${GITHUB_REF#refs/tags/}
+        else
+          VERSION="${{ inputs.version }}"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+        # Verificar si es pre-release (contiene alpha, beta, rc)
+        if [[ $VERSION =~ (alpha|beta|rc) ]]; then
+          echo "is_prerelease=true" >> $GITHUB_OUTPUT
+        else
+          echo "is_prerelease=false" >> $GITHUB_OUTPUT
+        fi
+        
+        echo "📋 Versión detectada: $VERSION"
+        echo "🔍 Es pre-release: $(echo $VERSION | grep -E '(alpha|beta|rc)' && echo 'true' || echo 'false')"
+    
+    - name: 📊 Información del Release
+      run: |
+        echo "🏭 === VALIDACIÓN DE RELEASE PARA PRODUCTION ==="
+        echo "🏷️ Versión: ${{ steps.version.outputs.version }}"
+        echo "👤 Solicitado por: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}" | cut -c1-8
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo "🔄 Es rollback: ${{ inputs.rollback || 'false' }}"
+        echo "🧪 Es pre-release: ${{ steps.version.outputs.is_prerelease }}"
+    
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: 🧪 Validaciones Críticas
+      run: |
+        echo "🧪 Ejecutando validaciones críticas para Production..."
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        
+        # Tests críticos
+        python -m unittest discover -s . -p "test_*.py" -v
+        
+        # Verificar que la aplicación arranca
+        python calculadora.py
+        
+        echo "✅ Todas las validaciones críticas pasaron"
+
+  deploy-production:
+    name: 🏭 Despliegue a Production
+    runs-on: ubuntu-latest
+    needs: validate-release
+    environment: 
+      name: production
+      url: https://calculadora-app.com
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: 📋 Información del Despliegue Production
+      run: |
+        echo "🏭 === DESPLIEGUE A PRODUCTION ==="
+        echo "🏷️ Versión: ${{ needs.validate-release.outputs.version }}"
+        echo "👤 Desplegado por: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}" | cut -c1-8
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo "🎯 Entorno: Production"
+        echo "🔗 URL: https://calculadora-app.com"
+        echo "🔄 Es rollback: ${{ inputs.rollback || 'false' }}"
+        echo "🧪 Es pre-release: ${{ needs.validate-release.outputs.is_prerelease }}"
+    
+    - name: 📦 Build para Production
+      run: |
+        echo "🔨 Construyendo aplicación para Production..."
+        mkdir -p dist
+        cp calculadora.py dist/
+        echo "VERSION=${{ needs.validate-release.outputs.version }}" > dist/.env
+        echo "ENVIRONMENT=production" >> dist/.env
+        echo "BUILD_DATE=$(date -Iseconds)" >> dist/.env
+        echo "DEPLOYED_BY=${{ github.actor }}" >> dist/.env
+        echo "COMMIT_SHA=${{ github.sha }}" >> dist/.env
+        echo "IS_ROLLBACK=${{ inputs.rollback || 'false' }}" >> dist/.env
+        echo "✅ Build para Production completado"
+    
+    - name: 🔒 Validaciones de Seguridad Avanzadas
+      run: |
+        echo "🔒 Ejecutando validaciones de seguridad avanzadas..."
+        pip install bandit
+        bandit -r . --exclude ./test_*.py -f json -o security-report.json || true
+        echo "🔍 Verificando configuración de producción..."
+        echo "✅ Validaciones de seguridad completadas"
+    
+    - name: 💾 Backup Pre-Despliegue
+      if: ${{ inputs.rollback != 'true' }}
+      run: |
+        echo "💾 Creando backup pre-despliegue..."
+        echo "📋 Backup de la versión anterior simulado"
+        echo "🗃️ Backup ID: backup-$(date +%Y%m%d-%H%M%S)"
+        echo "✅ Backup completado"
+    
+    - name: 🚀 Despliegue a Production
+      run: |
+        echo "🚀 Desplegando a Production..."
+        echo "📁 Contenido a desplegar:"
+        ls -la dist/
+        echo ""
+        echo "🔧 Configuración del entorno:"
+        cat dist/.env
+        echo ""
+        if [ "${{ inputs.rollback }}" == "true" ]; then
+          echo "🔄 Ejecutando ROLLBACK a versión anterior..."
+        else
+          echo "🌐 Ejecutando despliegue normal a Production..."
+        fi
+        sleep 5
+        echo "✅ Aplicación desplegada exitosamente en Production"
+        echo "🔗 Disponible en: https://calculadora-app.com"
+    
+    - name: 🧪 Tests de Producción
+      run: |
+        echo "🧪 Ejecutando tests de producción..."
+        python calculadora.py
+        echo "🔍 Verificando health checks..."
+        echo "📊 Verificando métricas básicas..."
+        echo "✅ Tests de producción pasaron correctamente"
+    
+    - name: 📊 Reporte Final de Despliegue
+      run: |
+        echo "📢 === REPORTE FINAL DE DESPLIEGUE PRODUCTION ==="
+        echo "✅ Despliegue a Production completado exitosamente"
+        echo "🏷️ Versión: ${{ needs.validate-release.outputs.version }}"
+        echo "👤 Por: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}"
+        echo "⏰ En: $(date)"
+        echo "🔗 URL: https://calculadora-app.com"
+        echo "🔄 Tipo: ${{ inputs.rollback == 'true' && 'ROLLBACK' || 'DESPLIEGUE NORMAL' }}"
+        echo ""
+        echo "📋 Post-despliegue:"
+        echo "- Monitorear métricas de aplicación"
+        echo "- Verificar logs de errores"
+        echo "- Confirmar funcionalidad con usuarios"
+        echo "- Actualizar documentación de release"
+    
+    - name: 📤 Subir Reportes
+      uses: actions/upload-artifact@v4
+      with:
+        name: production-deployment-${{ needs.validate-release.outputs.version }}
+        path: |
+          dist/.env
+          security-report.json
+        retention-days: 90

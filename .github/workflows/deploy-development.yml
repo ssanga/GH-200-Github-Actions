@@ -1,0 +1,88 @@
+name: 🚀 Deploy to Development
+
+on:
+  push:
+    branches: [ development ]
+  workflow_dispatch:  # Permite ejecución manual
+
+jobs:
+  deploy-dev:
+    name: 🛠️ Despliegue a Development
+    runs-on: ubuntu-latest
+    environment: 
+      name: development
+      url: https://dev.calculadora-app.com  # URL simulada
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: 📋 Información del Despliegue
+      run: |
+        echo "🚀 === DESPLIEGUE A DEVELOPMENT ==="
+        echo "👤 Desplegado por: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}" | cut -c1-8
+        echo "🌿 Rama: ${{ github.ref_name }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo "🎯 Entorno: Development"
+        echo "🔗 URL: https://dev.calculadora-app.com"
+    
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Instalar dependencias
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🧪 Tests rápidos pre-despliegue
+      run: |
+        echo "Ejecutando tests críticos antes del despliegue..."
+        python -m unittest test_calculadora.TestCalculadora.test_sumar -v
+        python -m unittest test_calculadora.TestCalculadora.test_dividir_por_cero -v
+    
+    - name: 📦 Simular Build de la Aplicación
+      run: |
+        echo "🔨 Construyendo aplicación para Development..."
+        mkdir -p dist
+        cp calculadora.py dist/
+        echo "VERSION=$(git rev-parse --short HEAD)" > dist/.env
+        echo "ENVIRONMENT=development" >> dist/.env
+        echo "BUILD_DATE=$(date -Iseconds)" >> dist/.env
+        echo "✅ Build completado"
+    
+    - name: 🚀 Simular Despliegue
+      run: |
+        echo "🚀 Desplegando a Development..."
+        echo "📁 Contenido a desplegar:"
+        ls -la dist/
+        echo ""
+        echo "🔧 Configuración del entorno:"
+        cat dist/.env
+        echo ""
+        echo "🌐 Simulando despliegue a servidor de desarrollo..."
+        sleep 2
+        echo "✅ Aplicación desplegada exitosamente en Development"
+        echo "🔗 Disponible en: https://dev.calculadora-app.com"
+    
+    - name: 🧪 Tests de Humo Post-Despliegue
+      run: |
+        echo "🧪 Ejecutando tests de humo..."
+        python calculadora.py
+        echo "✅ Tests de humo pasaron correctamente"
+    
+    - name: 📊 Notificación de Despliegue
+      run: |
+        echo "📢 === NOTIFICACIÓN DE DESPLIEGUE ==="
+        echo "✅ Despliegue a Development completado exitosamente"
+        echo "👤 Por: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}"
+        echo "⏰ En: $(date)"
+        echo "🔗 URL: https://dev.calculadora-app.com"
+        echo ""
+        echo "📋 Próximos pasos:"
+        echo "- Verificar funcionalidad en Development"
+        echo "- Crear PR hacia main para Staging"
+        echo "- Ejecutar tests de integración"

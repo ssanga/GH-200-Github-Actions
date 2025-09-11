@@ -1,0 +1,131 @@
+name: 🏷️ Crear Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versión del release (ej: v1.0.0)'
+        required: true
+        type: string
+      release_type:
+        description: 'Tipo de release'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - major
+        - minor
+        - patch
+        - prerelease
+      prerelease:
+        description: 'Es un pre-release?'
+        required: false
+        default: false
+        type: boolean
+      release_notes:
+        description: 'Notas del release'
+        required: false
+        type: string
+
+jobs:
+  create-release:
+    name: 🏷️ Crear Release y Tag
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: 📋 Validar Versión
+      run: |
+        VERSION="${{ inputs.version }}"
+        if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?$ ]]; then
+          echo "❌ Formato de versión inválido: $VERSION"
+          echo "✅ Formato esperado: v1.0.0 o v1.0.0-alpha"
+          exit 1
+        fi
+        echo "✅ Formato de versión válido: $VERSION"
+    
+    - name: 🔍 Verificar que el Tag no Existe
+      run: |
+        VERSION="${{ inputs.version }}"
+        if git tag -l | grep -q "^$VERSION$"; then
+          echo "❌ El tag $VERSION ya existe"
+          exit 1
+        fi
+        echo "✅ El tag $VERSION está disponible"
+    
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: 🧪 Tests Finales Pre-Release
+      run: |
+        echo "🧪 Ejecutando tests finales antes del release..."
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        python -m unittest discover -s . -p "test_*.py" -v
+        echo "✅ Todos los tests pasaron"
+    
+    - name: 📝 Generar Notas del Release
+      id: release_notes
+      run: |
+        VERSION="${{ inputs.version }}"
+        RELEASE_NOTES="${{ inputs.release_notes }}"
+        
+        if [ -z "$RELEASE_NOTES" ]; then
+          # Generar notas automáticas basadas en commits
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            echo "## 🚀 Cambios desde $LAST_TAG" > release_notes.md
+            echo "" >> release_notes.md
+            git log --pretty=format:"- %s (%an)" $LAST_TAG..HEAD >> release_notes.md
+          else
+            echo "## 🚀 Release Inicial $VERSION" > release_notes.md
+            echo "" >> release_notes.md
+            echo "- Versión inicial de la calculadora" >> release_notes.md
+            echo "- Implementación de operaciones básicas" >> release_notes.md
+            echo "- Suite completa de tests unitarios" >> release_notes.md
+          fi
+        else
+          echo "$RELEASE_NOTES" > release_notes.md
+        fi
+        
+        echo "📝 Notas del release generadas:"
+        cat release_notes.md
+    
+    - name: 🏷️ Crear Tag
+      run: |
+        VERSION="${{ inputs.version }}"
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git tag -a $VERSION -m "Release $VERSION"
+        git push origin $VERSION
+        echo "✅ Tag $VERSION creado y pusheado"
+    
+    - name: 📦 Crear Release en GitHub
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ inputs.version }}
+        release_name: Release ${{ inputs.version }}
+        body_path: release_notes.md
+        draft: false
+        prerelease: ${{ inputs.prerelease }}
+    
+    - name: 📊 Información del Release
+      run: |
+        echo "🎉 === RELEASE CREADO EXITOSAMENTE ==="
+        echo "🏷️ Versión: ${{ inputs.version }}"
+        echo "📦 Tipo: ${{ inputs.release_type }}"
+        echo "🧪 Pre-release: ${{ inputs.prerelease }}"
+        echo "👤 Creado por: ${{ github.actor }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo ""
+        echo "🚀 El workflow de despliegue a Production se ejecutará automáticamente"
+        echo "🔗 Ver release: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ inputs.version }}"

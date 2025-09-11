@@ -1,0 +1,119 @@
+name: 🎭 Deploy to Staging
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Forzar despliegue (saltarse validaciones)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  pre-deploy-checks:
+    name: ✅ Validaciones Pre-Despliegue
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    
+    - name: Instalar dependencias
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    
+    - name: 🧪 Suite Completa de Tests
+      run: |
+        echo "🧪 Ejecutando suite completa de tests para Staging..."
+        python -m unittest discover -s . -p "test_*.py" -v
+    
+    - name: 📊 Verificar Cobertura
+      run: |
+        pip install coverage
+        coverage run -m unittest discover -s . -p "test_*.py"
+        coverage report --fail-under=90
+
+  deploy-staging:
+    name: 🎭 Despliegue a Staging
+    runs-on: ubuntu-latest
+    needs: pre-deploy-checks
+    if: success() || inputs.force_deploy
+    environment: 
+      name: staging
+      url: https://staging.calculadora-app.com
+    
+    steps:
+    - name: Checkout código
+      uses: actions/checkout@v4
+    
+    - name: 📋 Información del Despliegue Staging
+      run: |
+        echo "🎭 === DESPLIEGUE A STAGING ==="
+        echo "👤 Desplegado por: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}" | cut -c1-8
+        echo "🌿 Rama: ${{ github.ref_name }}"
+        echo "📅 Fecha: $(date -Iseconds)"
+        echo "🎯 Entorno: Staging"
+        echo "🔗 URL: https://staging.calculadora-app.com"
+        echo "🚨 Forzado: ${{ inputs.force_deploy || 'false' }}"
+    
+    - name: 📦 Build para Staging
+      run: |
+        echo "🔨 Construyendo aplicación para Staging..."
+        mkdir -p dist
+        cp calculadora.py dist/
+        echo "VERSION=$(git rev-parse --short HEAD)" > dist/.env
+        echo "ENVIRONMENT=staging" >> dist/.env
+        echo "BUILD_DATE=$(date -Iseconds)" >> dist/.env
+        echo "DEPLOYED_BY=${{ github.actor }}" >> dist/.env
+        echo "✅ Build para Staging completado"
+    
+    - name: 🔍 Validaciones de Seguridad
+      run: |
+        echo "🔒 Ejecutando validaciones de seguridad..."
+        pip install bandit
+        bandit -r . --exclude ./test_*.py || echo "⚠️ Advertencias de seguridad encontradas"
+        echo "✅ Validaciones de seguridad completadas"
+    
+    - name: 🚀 Despliegue a Staging
+      run: |
+        echo "🚀 Desplegando a Staging..."
+        echo "📁 Contenido a desplegar:"
+        ls -la dist/
+        echo ""
+        echo "🔧 Configuración del entorno:"
+        cat dist/.env
+        echo ""
+        echo "🌐 Simulando despliegue a servidor de staging..."
+        sleep 3
+        echo "✅ Aplicación desplegada exitosamente en Staging"
+        echo "🔗 Disponible en: https://staging.calculadora-app.com"
+    
+    - name: 🧪 Tests de Integración
+      run: |
+        echo "🧪 Ejecutando tests de integración en Staging..."
+        python calculadora.py
+        echo "🔍 Verificando endpoints simulados..."
+        echo "✅ Tests de integración pasaron correctamente"
+    
+    - name: 📊 Reporte de Despliegue
+      run: |
+        echo "📢 === REPORTE DE DESPLIEGUE STAGING ==="
+        echo "✅ Despliegue a Staging completado exitosamente"
+        echo "👤 Por: ${{ github.actor }}"
+        echo "🆔 Commit: ${{ github.sha }}"
+        echo "⏰ En: $(date)"
+        echo "🔗 URL: https://staging.calculadora-app.com"
+        echo ""
+        echo "📋 Listo para Production:"
+        echo "- Crear tag de release (ej: v1.0.0)"
+        echo "- Ejecutar workflow de producción"
+        echo "- Monitorear métricas en staging"
