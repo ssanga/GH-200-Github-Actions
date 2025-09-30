@@ -1,0 +1,320 @@
+# Pipeline por Entorno: Development
+# Workflow específico para el entorno de desarrollo
+# Trigger: Push a rama 'dev' o 'development'
+
+name: 👷 Deploy to Development
+
+# Triggers específicos para desarrollo
+on:
+  push:
+    branches:
+      - dev
+      - development
+      - develop  # Por compatibilidad
+  
+  # Trigger manual para testing
+  workflow_dispatch:
+    inputs:
+      force_deploy:
+        description: 'Forzar deploy (skip tests)'
+        required: false
+        default: false
+        type: boolean
+      debug_mode:
+        description: 'Modo debug (logs detallados)'
+        required: false
+        default: false
+        type: boolean
+
+# Variables específicas del entorno Development
+env:
+  ENVIRONMENT: 'development'
+  NODE_ENV: 'development'
+  PYTHON_VERSION: '3.9'
+  DEBUG: 'true'
+  LOG_LEVEL: 'debug'
+  
+  # URLs específicas de desarrollo
+  API_URL: 'https://dev-api.calculadora.example.com'
+  WEB_URL: 'https://dev.calculadora.example.com'
+  DATABASE_URL: 'postgresql://dev-db.example.com/calculadora_dev'
+  
+  # Configuraciones de desarrollo
+  CACHE_TTL: '60'  # 1 minuto para desarrollo
+  RATE_LIMIT: '1000'  # Límite alto para desarrollo
+  SSL_REQUIRED: 'false'
+  
+jobs:
+  # ===============================================
+  # JOB 1: VALIDACIÓN Y BUILD PARA DESARROLLO
+  # ===============================================
+  build-dev:
+    name: 🔨 Build for Development
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+          # Instalar dependencias adicionales para desarrollo
+          pip install pytest pytest-cov black flake8 bandit
+          
+      - name: 🧠 Code quality checks (Development)
+        if: ${{ !inputs.force_deploy }}
+        run: |
+          echo "🧠 Ejecutando checks de calidad para desarrollo..."
+          
+          # Formateo de código
+          echo "  ▶ Verificando formato con black..."
+          black --check --diff calculadora.py test_calculadora.py || echo "⚠️ Formato no estándar (permitido en dev)"
+          
+          # Linting
+          echo "  ▶ Ejecutando linting con flake8..."
+          flake8 calculadora.py test_calculadora.py --max-line-length=100 || echo "⚠️ Issues de linting (permitido en dev)"
+          
+          # Análisis de seguridad básico
+          echo "  ▶ Análisis de seguridad con bandit..."
+          bandit -r . -f json || echo "⚠️ Issues de seguridad menores (revisar en staging)"
+          
+      - name: 🧪 Tests unitarios (Modo desarrollo)
+        if: ${{ !inputs.force_deploy }}
+        run: |
+          echo "🧪 Ejecutando tests en modo desarrollo..."
+          
+          # Tests con coverage pero menos estricto
+          pytest test_calculadora.py -v --cov=calculadora --cov-report=term-missing --cov-fail-under=70
+          
+          echo "✅ Tests de desarrollo completados"
+          
+      - name: 📊 Generate development build
+        run: |
+          echo "📊 Generando build para desarrollo..."
+          
+          mkdir -p dist-dev
+          
+          # Crear configuración específica de desarrollo
+          cat > dist-dev/config.py << 'EOF'
+          # Configuración específica de Development
+          import os
+          
+          class DevelopmentConfig:
+              DEBUG = True
+              TESTING = False
+              LOG_LEVEL = 'DEBUG'
+              
+              # URLs de desarrollo
+              API_URL = '${{ env.API_URL }}'
+              WEB_URL = '${{ env.WEB_URL }}'
+              DATABASE_URL = '${{ env.DATABASE_URL }}'
+              
+              # Configuraciones relajadas para desarrollo
+              CACHE_TTL = ${{ env.CACHE_TTL }}
+              RATE_LIMIT = ${{ env.RATE_LIMIT }}
+              SSL_REQUIRED = ${{ env.SSL_REQUIRED }}
+              
+              # Feature flags para desarrollo
+              ENABLE_DEBUG_TOOLBAR = True
+              ENABLE_PROFILING = True
+              ALLOW_CORS = True
+              
+          config = DevelopmentConfig()
+          EOF
+          
+          # Copiar archivos de aplicación
+          cp calculadora.py dist-dev/
+          cp requirements.txt dist-dev/
+          
+          # Crear archivo de información de build
+          cat > dist-dev/build-info.json << EOF
+          {
+            "environment": "${{ env.ENVIRONMENT }}",
+            "branch": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "build_time": "$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")",
+            "build_number": "${{ github.run_number }}",
+            "urls": {
+              "api": "${{ env.API_URL }}",
+              "web": "${{ env.WEB_URL }}"
+            },
+            "debug_mode": ${{ inputs.debug_mode || false }}
+          }
+          EOF
+          
+      - name: 📤 Upload development artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: calculadora-dev-${{ github.run_number }}
+          path: dist-dev/
+          retention-days: 3  # Menor retención para desarrollo
+          
+    outputs:
+      artifact-name: calculadora-dev-${{ github.run_number }}
+      build-url: ${{ env.WEB_URL }}
+      
+  # ===============================================
+  # JOB 2: DEPLOY AL ENTORNO DE DESARROLLO
+  # ===============================================
+  deploy-development:
+    name: 🚀 Deploy to Development Environment
+    runs-on: ubuntu-latest
+    needs: build-dev
+    environment:
+      name: development
+      url: ${{ env.WEB_URL }}
+    
+    steps:
+      - name: 📥 Download development artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-dev.outputs.artifact-name }}
+          path: ./deploy-dev
+          
+      - name: 🔍 Verify development artifact
+        run: |
+          echo "🔍 Verificando artifact de desarrollo..."
+          ls -la ./deploy-dev
+          
+          echo "📄 Build info:"
+          cat ./deploy-dev/build-info.json
+          
+          echo "⚙️ Configuración de desarrollo:"
+          head -20 ./deploy-dev/config.py
+          
+      - name: 🌍 Setup development environment
+        run: |
+          echo "🌍 Configurando entorno de desarrollo..."
+          
+          # Simular configuración de desarrollo
+          echo "  ▶ Configurando variables de entorno..."
+          echo "ENVIRONMENT=${{ env.ENVIRONMENT }}" >> $GITHUB_ENV
+          echo "DEBUG=${{ env.DEBUG }}" >> $GITHUB_ENV
+          echo "LOG_LEVEL=${{ env.LOG_LEVEL }}" >> $GITHUB_ENV
+          
+          echo "  ▶ Preparando servicios de desarrollo..."
+          echo "    - Base de datos: ${{ env.DATABASE_URL }}"
+          echo "    - API: ${{ env.API_URL }}"
+          echo "    - Cache TTL: ${{ env.CACHE_TTL }}s"
+          
+          echo "✅ Entorno de desarrollo configurado"
+          
+      - name: 🧪 Smoke tests en desarrollo
+        run: |
+          echo "🧪 Ejecutando smoke tests en desarrollo..."
+          cd ./deploy-dev
+          
+          # Tests básicos con configuración de desarrollo
+          python -c "
+          import sys
+          sys.path.append('.')
+          
+          from calculadora import Calculadora
+          from config import config
+          
+          # Verificar configuración
+          print(f'🌍 Entorno: {config.DEBUG and \"DEBUG\" or \"PRODUCTION\"}')
+          print(f'🔗 API URL: {config.API_URL}')
+          print(f'📊 Cache TTL: {config.CACHE_TTL}s')
+          
+          # Tests funcionales básicos
+          calc = Calculadora()
+          
+          assert calc.sumar(2, 3) == 5, 'Error en suma'
+          assert calc.restar(10, 4) == 6, 'Error en resta'
+          assert calc.multiplicar(3, 4) == 12, 'Error en multiplicación'
+          assert calc.dividir(15, 3) == 5.0, 'Error en división'
+          
+          print('✅ Smoke tests de desarrollo pasaron')
+          "
+          
+      - name: 🚀 Deploy to Development
+        run: |
+          echo "🚀 Desplegando en entorno de DESARROLLO..."
+          
+          # Simular deployment específico para desarrollo
+          echo "  📈 Deployment config:"
+          echo "    - Environment: ${{ env.ENVIRONMENT }}"
+          echo "    - Debug Mode: ${{ env.DEBUG }}"
+          echo "    - URL: ${{ env.WEB_URL }}"
+          echo "    - Build: ${{ needs.build-dev.outputs.artifact-name }}"
+          
+          # Deployment rápido para desarrollo (sin downtime concerns)
+          echo "  ▶ Parando servicios anteriores..."
+          sleep 1
+          
+          echo "  ▶ Desplegando nueva versión..."
+          sleep 2
+          
+          echo "  ▶ Iniciando servicios..."
+          sleep 1
+          
+          echo "  ▶ Configurando hot-reload para desarrollo..."
+          sleep 1
+          
+          echo "✅ Deploy a desarrollo completado"
+          echo "📊 Métricas de deployment:"
+          echo "  - Tiempo total: ~5 segundos"
+          echo "  - Downtime: ~1 segundo (aceptable en dev)"
+          echo "  - Hot-reload: Habilitado"
+          
+      - name: 📝 Update development status
+        run: |
+          echo "deployment_status=success" >> $GITHUB_OUTPUT
+          echo "deployment_url=${{ env.WEB_URL }}" >> $GITHUB_OUTPUT
+          echo "environment=development" >> $GITHUB_OUTPUT
+          
+  # ===============================================
+  # JOB 3: POST-DEPLOYMENT PARA DESARROLLO
+  # ===============================================
+  post-deploy-dev:
+    name: 📊 Post-Deployment Development
+    runs-on: ubuntu-latest
+    needs: [build-dev, deploy-development]
+    if: always()
+    
+    steps:
+      - name: 📊 Development metrics
+        run: |
+          echo "📊 Métricas del deployment de desarrollo:"
+          echo "  🌍 Environment: development"
+          echo "  🌿 Branch: ${{ github.ref_name }}"
+          echo "  📦 Artifact: ${{ needs.build-dev.outputs.artifact-name }}"
+          echo "  🔗 URL: ${{ needs.build-dev.outputs.build-url }}"
+          echo "  ⏱️ Deploy time: $(date '+%H:%M:%S')"
+          echo "  📊 Status: ${{ needs.deploy-development.result }}"
+          
+      - name: 📧 Development notification
+        if: always()
+        run: |
+          if [[ "${{ needs.deploy-development.result }}" == "success" ]]; then
+            echo "✅ 📧 DESARROLLO - Deploy exitoso"
+            echo "  🔗 URL: ${{ needs.build-dev.outputs.build-url }}"
+            echo "  🌿 Branch: ${{ github.ref_name }}"
+            echo "  👤 Deployer: ${{ github.actor }}"
+          else
+            echo "❌ 📧 DESARROLLO - Deploy falló"
+            echo "  🌿 Branch: ${{ github.ref_name }}"
+            echo "  👤 Deployer: ${{ github.actor }}"
+            echo "  🔗 Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          fi
+          
+          # En un entorno real, esto sería una notificación a Slack/Teams específica para desarrollo
+          echo "📧 Notificación de desarrollo enviada"
+          
+      - name: 🧹 Development cleanup
+        run: |
+          echo "🧹 Limpieza específica de desarrollo:"
+          echo "  - Artifacts: Retención 3 días"
+          echo "  - Logs: Nivel DEBUG habilitado"
+          echo "  - Cache: TTL corto para development"
+          echo "✅ Limpieza de desarrollo completada"
