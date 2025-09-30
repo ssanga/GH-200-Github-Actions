@@ -1,0 +1,341 @@
+# Workflow GitFlow - Entornos Automáticos
+# Este workflow implementa la estrategia GitFlow con despliegues automáticos a diferentes entornos
+
+name: 🔄 GitFlow Environments
+
+# Triggers para diferentes ramas
+on:
+  push:
+    branches:
+      - main          # Producción
+      - develop       # Staging/Development
+      - 'feature/**'  # Features temporales
+      - 'release/**'  # Pre-producción
+      - 'hotfix/**'   # Hotfixes urgentes
+  
+  pull_request:
+    branches:
+      - main
+      - develop
+    types: [opened, synchronize, reopened]
+
+  # Para releases manuales
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Entorno destino'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      force_deploy:
+        description: 'Forzar despliegue (skip tests)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.9'
+  ARTIFACT_NAME: 'calculadora-app'
+  
+jobs:
+  # ===============================================
+  # JOB 1: BUILD - Construir aplicación una vez
+  # ===============================================
+  build:
+    name: 🔨 Build Application
+    runs-on: ubuntu-latest
+    
+    # Solo ejecutar build en pushes o PRs específicos
+    if: >
+      github.event_name == 'push' || 
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+      - name: 🧪 Run unit tests
+        if: ${{ !inputs.force_deploy }}
+        run: |
+          python -m unittest test_calculadora.py -v
+          
+      - name: 📊 Generate coverage report
+        if: ${{ !inputs.force_deploy }}
+        run: |
+          pip install coverage
+          coverage run -m unittest test_calculadora.py
+          coverage report --show-missing
+          coverage html
+          
+      - name: 📄 Create build info
+        run: |
+          mkdir -p dist
+          echo "Build Info:" > dist/build-info.txt
+          echo "Branch: ${{ github.ref_name }}" >> dist/build-info.txt
+          echo "Commit: ${{ github.sha }}" >> dist/build-info.txt
+          echo "Build Time: $(date)" >> dist/build-info.txt
+          echo "Event: ${{ github.event_name }}" >> dist/build-info.txt
+          
+          # Copiar archivos de aplicación
+          cp calculadora.py dist/
+          cp requirements.txt dist/
+          
+      - name: 📤 Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARTIFACT_NAME }}-${{ github.run_number }}
+          path: dist/
+          retention-days: 7
+          
+    outputs:
+      artifact-name: ${{ env.ARTIFACT_NAME }}-${{ github.run_number }}
+      branch-name: ${{ github.ref_name }}
+      
+  # ===============================================
+  # JOB 2: STAGING - Deploy a staging (develop)
+  # ===============================================
+  deploy-staging:
+    name: 🚀 Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build
+    environment: 
+      name: staging
+      url: https://staging.calculadora.example.com
+    
+    # Solo para develop branch o workflow_dispatch a staging
+    if: >
+      github.ref == 'refs/heads/develop' ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
+    
+    steps:
+      - name: 📥 Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: ./deploy
+          
+      - name: 🔍 Verify artifact
+        run: |
+          echo "📂 Contenido del artifact:"
+          ls -la ./deploy
+          echo "📄 Build info:"
+          cat ./deploy/build-info.txt
+          
+      - name: 🧪 Smoke tests en staging
+        run: |
+          echo "🧪 Ejecutando smoke tests en staging..."
+          cd ./deploy
+          python -c "from calculadora import Calculadora; calc = Calculadora(); print(f'Test suma: {calc.sumar(2, 2)}')"
+          echo "✅ Smoke tests pasados"
+          
+      - name: 🚀 Deploy to Staging Environment
+        run: |
+          echo "🚀 Desplegando en STAGING..."
+          echo "📦 Artifact: ${{ needs.build.outputs.artifact-name }}"
+          echo "🌿 Branch: ${{ needs.build.outputs.branch-name }}"
+          echo "🔗 URL: https://staging.calculadora.example.com"
+          echo "✅ Deploy completado en staging"
+          
+      - name: 📝 Update deployment status
+        run: |
+          echo "deployment_status=success" >> $GITHUB_OUTPUT
+          echo "deployment_url=https://staging.calculadora.example.com" >> $GITHUB_OUTPUT
+          
+  # ===============================================
+  # JOB 3: PRODUCTION - Deploy a producción (main)
+  # ===============================================
+  deploy-production:
+    name: 🌟 Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build
+    environment: 
+      name: production
+      url: https://calculadora.example.com
+    
+    # Solo para main branch, releases, hotfixes o workflow_dispatch a production
+    if: >
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/release/') ||
+      startsWith(github.ref, 'refs/heads/hotfix/') ||
+      (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
+    
+    steps:
+      - name: 📥 Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: ./deploy
+          
+      - name: 🔍 Verify artifact
+        run: |
+          echo "📂 Contenido del artifact:"
+          ls -la ./deploy
+          echo "📄 Build info:"
+          cat ./deploy/build-info.txt
+          
+      - name: 🧪 Extended tests en production
+        run: |
+          echo "🧪 Ejecutando tests extendidos en producción..."
+          cd ./deploy
+          python -c "
+          from calculadora import Calculadora
+          calc = Calculadora()
+          
+          # Tests críticos
+          assert calc.sumar(2, 2) == 4
+          assert calc.restar(5, 3) == 2
+          assert calc.multiplicar(3, 4) == 12
+          assert calc.dividir(10, 2) == 5.0
+          
+          print('✅ Todos los tests críticos pasaron')
+          "
+          
+      - name: 🚀 Deploy to Production Environment
+        run: |
+          echo "🌟 Desplegando en PRODUCCIÓN..."
+          echo "📦 Artifact: ${{ needs.build.outputs.artifact-name }}"
+          echo "🌿 Branch: ${{ needs.build.outputs.branch-name }}"
+          echo "🔗 URL: https://calculadora.example.com"
+          
+          # Simular backup antes del deploy
+          echo "💾 Creando backup de la versión actual..."
+          sleep 2
+          
+          # Simular deploy gradual
+          echo "📈 Desplegando gradualmente..."
+          echo "  ▶ 10% del tráfico..."
+          sleep 1
+          echo "  ▶ 50% del tráfico..."
+          sleep 1
+          echo "  ▶ 100% del tráfico..."
+          
+          echo "✅ Deploy completado en producción"
+          
+  # ===============================================
+  # JOB 4: FEATURE - Testing para feature branches
+  # ===============================================
+  test-feature:
+    name: 🧪 Test Feature Branch
+    runs-on: ubuntu-latest
+    needs: build
+    
+    # Solo para feature branches
+    if: startsWith(github.ref, 'refs/heads/feature/')
+    
+    steps:
+      - name: 📥 Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.artifact-name }}
+          path: ./test
+          
+      - name: 🧪 Feature testing
+        run: |
+          echo "🧪 Probando feature branch: ${{ needs.build.outputs.branch-name }}"
+          cd ./test
+          
+          # Tests específicos para features
+          python -c "
+          from calculadora import Calculadora
+          calc = Calculadora()
+          
+          print('🧮 Probando funcionalidades básicas:')
+          print(f'  Suma: 2 + 3 = {calc.sumar(2, 3)}')
+          print(f'  Resta: 10 - 4 = {calc.restar(10, 4)}')
+          print(f'  Multiplicación: 5 * 6 = {calc.multiplicar(5, 6)}')
+          print(f'  División: 15 / 3 = {calc.dividir(15, 3)}')
+          
+          print('✅ Feature tests completados')
+          "
+          
+      - name: 📊 Feature metrics
+        run: |
+          echo "📊 Métricas de la feature:"
+          echo "  🌿 Branch: ${{ needs.build.outputs.branch-name }}"
+          echo "  📦 Artifact: ${{ needs.build.outputs.artifact-name }}"
+          echo "  ⏱️ Test duration: $(date '+%T')"
+          echo "  ✅ Status: Passed"
+          
+  # ===============================================
+  # JOB 5: NOTIFICATION - Notificaciones de estado
+  # ===============================================
+  notify:
+    name: 📢 Notify Deployment Status
+    runs-on: ubuntu-latest
+    needs: [build, deploy-staging, deploy-production, test-feature]
+    if: always()  # Ejecutar siempre, independientemente del resultado
+    
+    steps:
+      - name: 📊 Determine overall status
+        id: status
+        run: |
+          echo "📊 Analizando estado general del workflow..."
+          
+          # Verificar estado de jobs
+          BUILD_STATUS="${{ needs.build.result }}"
+          STAGING_STATUS="${{ needs.deploy-staging.result }}"
+          PRODUCTION_STATUS="${{ needs.deploy-production.result }}"
+          FEATURE_STATUS="${{ needs.test-feature.result }}"
+          
+          echo "🔍 Estados de jobs:"
+          echo "  📦 Build: $BUILD_STATUS"
+          echo "  🚀 Staging: $STAGING_STATUS"
+          echo "  🌟 Production: $PRODUCTION_STATUS"
+          echo "  🧪 Feature: $FEATURE_STATUS"
+          
+          # Determinar estado general
+          if [[ "$BUILD_STATUS" == "failure" ]]; then
+            echo "❌ Build falló - Workflow failed"
+            echo "overall_status=failed" >> $GITHUB_OUTPUT
+          elif [[ "$STAGING_STATUS" == "failure" || "$PRODUCTION_STATUS" == "failure" ]]; then
+            echo "⚠️ Deploy falló - Partial failure"
+            echo "overall_status=partial" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Workflow completado exitosamente"
+            echo "overall_status=success" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: 📢 Send notification
+        run: |
+          echo "📢 Enviando notificación..."
+          echo "🌿 Branch: ${{ github.ref_name }}"
+          echo "💾 Commit: ${{ github.sha }}"
+          echo "👤 Actor: ${{ github.actor }}"
+          echo "📊 Status: ${{ steps.status.outputs.overall_status }}"
+          echo "🔗 Workflow URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          
+          # En un entorno real, aquí enviarías a Slack, Teams, etc.
+          echo "📧 Notificación enviada (simulada)"
+          
+  # ===============================================
+  # JOB 6: CLEANUP - Limpieza de artifacts
+  # ===============================================
+  cleanup:
+    name: 🧹 Cleanup Artifacts
+    runs-on: ubuntu-latest
+    needs: [notify]
+    if: always()  # Siempre ejecutar limpieza
+    
+    steps:
+      - name: 🧹 Artifact cleanup info
+        run: |
+          echo "🧹 Información de limpieza de artifacts:"
+          echo "📦 Artifact name: ${{ needs.build.outputs.artifact-name || 'N/A' }}"
+          echo "⏰ Retention: 7 días"
+          echo "🗑️ Auto-cleanup: Habilitado"
+          echo "✅ Limpieza programada"
