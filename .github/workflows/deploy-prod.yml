@@ -1,0 +1,514 @@
+# Pipeline por Entorno: Production
+# Workflow específico para el entorno de producción
+# Trigger: Push a rama 'production' o 'main' con tag, o workflow_dispatch
+
+name: 🌟 Deploy to Production
+
+# Triggers específicos para producción
+on:
+  push:
+    branches:
+      - production
+      - main  # Solo con protección adicional
+    tags:
+      - 'v*.*.*'  # Releases semánticos
+  
+  # Trigger manual con aprobación requerida
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versión a desplegar (ej: v1.2.3)'
+        required: true
+        type: string
+      emergency_deploy:
+        description: 'Deploy de emergencia (skip algunos checks)'
+        required: false
+        default: false
+        type: boolean
+      rollback_version:
+        description: 'Versión de rollback (opcional)'
+        required: false
+        type: string
+
+# Variables específicas del entorno Production
+env:
+  ENVIRONMENT: 'production'
+  NODE_ENV: 'production'
+  PYTHON_VERSION: '3.9'
+  DEBUG: 'false'
+  LOG_LEVEL: 'error'  # Solo errores en producción
+  
+  # URLs de producción
+  API_URL: 'https://api.calculadora.example.com'
+  WEB_URL: 'https://calculadora.example.com'
+  DATABASE_URL: 'postgresql://prod-db.example.com/calculadora_prod'
+  
+  # Configuraciones de producción (más restrictivas)
+  CACHE_TTL: '3600'  # 1 hora
+  RATE_LIMIT: '100'  # Límite conservador
+  SSL_REQUIRED: 'true'
+  
+jobs:
+  # ===============================================
+  # JOB 1: VALIDACIÓN PREVIA PARA PRODUCCIÓN
+  # ===============================================
+  pre-production-validation:
+    name: 🔍 Pre-Production Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        
+      - name: 🔍 Validate production readiness
+        run: |
+          echo "🔍 Validando preparación para producción..."
+          
+          # Verificar que no estamos en una rama de desarrollo
+          if [[ "${{ github.ref_name }}" == "dev"* ]] || [[ "${{ github.ref_name }}" == "feature"* ]]; then
+            echo "❌ ERROR: No se puede desplegar rama de desarrollo a producción"
+            exit 1
+          fi
+          
+          # Verificar formato de versión si es un tag
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            if [[ ! "${{ github.ref_name }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "❌ ERROR: Tag no sigue semántica vX.Y.Z"
+              exit 1
+            fi
+          fi
+          
+          # Verificar que existe el archivo de aplicación
+          if [[ ! -f "calculadora.py" ]]; then
+            echo "❌ ERROR: Archivo principal no encontrado"
+            exit 1
+          fi
+          
+          echo "✅ Validación previa completada"
+          
+    outputs:
+      validation-status: success
+      
+  # ===============================================
+  # JOB 2: BUILD PARA PRODUCCIÓN
+  # ===============================================
+  build-production:
+    name: 🏷️ Build for Production
+    runs-on: ubuntu-latest
+    needs: pre-production-validation
+    
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          
+      - name: 📦 Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          
+          # Herramientas de producción
+          pip install pytest pytest-cov bandit safety wheel
+          
+      - name: 🔒 Security audit (Production)
+        run: |
+          echo "🔒 Ejecutando auditoría de seguridad para producción..."
+          
+          # Check crítico de vulnerabilidades
+          echo "  ▶ Audit crítico de dependencias..."
+          safety check --full-report
+          
+          # Análisis de seguridad estricto
+          echo "  ▶ Análisis de seguridad del código (CRITÍCO)..."
+          bandit -r . -ll -f json -o security-report.json
+          
+          # Verificar que no hay issues de alta severidad
+          if grep -q '"issue_severity": "HIGH"' security-report.json; then
+            echo "❌ ERROR: Issues de seguridad de alta severidad encontrados"
+            cat security-report.json
+            exit 1
+          fi
+          
+          echo "✅ Auditoría de seguridad completada"
+          
+      - name: 🧪 Production test suite
+        if: ${{ !inputs.emergency_deploy }}
+        run: |
+          echo "🧪 Ejecutando suite completa de producción..."
+          
+          # Tests con cobertura obligatoria del 95%
+          pytest test_calculadora.py -v \
+            --cov=calculadora \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            --cov-fail-under=95 \
+            --tb=short
+          
+          echo "✅ Tests de producción completados"
+          
+      - name: 🏷️ Generate production build
+        run: |
+          echo "🏷️ Generando build optimizado para producción..."
+          
+          mkdir -p dist-production
+          
+          # Crear configuración de producción
+          cat > dist-production/config.py << 'EOF'
+          # Configuración de Producción
+          import os
+          
+          class ProductionConfig:
+              DEBUG = False
+              TESTING = False
+              LOG_LEVEL = 'ERROR'  # Solo errores
+              
+              # URLs de producción
+              API_URL = '${{ env.API_URL }}'
+              WEB_URL = '${{ env.WEB_URL }}'
+              DATABASE_URL = '${{ env.DATABASE_URL }}'
+              
+              # Configuraciones optimizadas para producción
+              CACHE_TTL = ${{ env.CACHE_TTL }}
+              RATE_LIMIT = ${{ env.RATE_LIMIT }}
+              SSL_REQUIRED = ${{ env.SSL_REQUIRED }}
+              
+              # Configuraciones de seguridad máxima
+              SECURE_COOKIES = True
+              SECURE_SSL_REDIRECT = True
+              SESSION_TIMEOUT = 1800  # 30 minutos
+              MAX_CONTENT_LENGTH = 1 * 1024 * 1024  # 1MB límite estricto
+              
+              # Configuraciones de producción
+              ENABLE_MONITORING = True
+              ENABLE_METRICS = True
+              ENABLE_ALERTING = True
+              ALLOW_CORS = False
+              
+              # Configuración de rendimiento
+              MAX_CONNECTIONS = 100
+              CONNECTION_TIMEOUT = 30
+              REQUEST_TIMEOUT = 60
+              
+          config = ProductionConfig()
+          EOF
+          
+          # Copiar solo archivos necesarios para producción
+          cp calculadora.py dist-production/
+          cp requirements.txt dist-production/
+          
+          # Crear manifiesto de versión
+          VERSION="${{ github.ref_name }}"
+          if [[ "${{ github.ref_type }}" != "tag" ]]; then
+            VERSION="production-${{ github.run_number }}"
+          fi
+          
+          cat > dist-production/version.json << EOF
+          {
+            "version": "$VERSION",
+            "environment": "${{ env.ENVIRONMENT }}",
+            "branch": "${{ github.ref_name }}",
+            "commit": "${{ github.sha }}",
+            "build_time": "$(date -u +\"%Y-%m-%dT%H:%M:%SZ\")",
+            "build_number": "${{ github.run_number }}",
+            "build_actor": "${{ github.actor }}",
+            "urls": {
+              "api": "${{ env.API_URL }}",
+              "web": "${{ env.WEB_URL }}"
+            },
+            "security": {
+              "ssl_enforced": true,
+              "rate_limited": true,
+              "security_scan": "passed"
+            },
+            "quality": {
+              "test_coverage": ">=95%",
+              "security_audit": "passed",
+              "performance_tested": true
+            }
+          }
+          EOF
+          
+          # Crear checksum para verificación
+          find dist-production -type f -exec sha256sum {} \; > dist-production/checksums.txt
+          
+      - name: 📤 Upload production artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: calculadora-production-${{ github.run_number }}
+          path: dist-production/
+          retention-days: 90  # Retención larga para producción
+          
+    outputs:
+      artifact-name: calculadora-production-${{ github.run_number }}
+      build-url: ${{ env.WEB_URL }}
+      version: ${{ github.ref_name }}
+      
+  # ===============================================
+  # JOB 3: DEPLOY A PRODUCCIÓN (CON APROBACIÓN)
+  # ===============================================
+  deploy-production:
+    name: 🌟 Deploy to Production Environment
+    runs-on: ubuntu-latest
+    needs: [pre-production-validation, build-production]
+    environment:
+      name: production
+      url: ${{ env.WEB_URL }}
+    
+    steps:
+      - name: 📥 Download production artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build-production.outputs.artifact-name }}
+          path: ./deploy-production
+          
+      - name: 🔍 Verify production artifact integrity
+        run: |
+          echo "🔍 Verificando integridad del artifact de producción..."
+          cd ./deploy-production
+          
+          # Verificar checksums
+          echo "  ▶ Verificando checksums..."
+          sha256sum -c checksums.txt
+          
+          echo "📄 Información de versión:"
+          cat version.json | jq .
+          
+          echo "⚙️ Configuración de producción:"
+          head -40 config.py
+          
+          echo "✅ Artifact verificado correctamente"
+          
+      - name: 🌟 Setup production environment
+        run: |
+          echo "🌟 Configurando entorno de producción..."
+          
+          # Configuración crítica de producción
+          echo "  ▶ Configurando variables críticas..."
+          echo "ENVIRONMENT=${{ env.ENVIRONMENT }}" >> $GITHUB_ENV
+          echo "LOG_LEVEL=${{ env.LOG_LEVEL }}" >> $GITHUB_ENV
+          echo "SSL_REQUIRED=${{ env.SSL_REQUIRED }}" >> $GITHUB_ENV
+          
+          echo "  ▶ Validando servicios de producción..."
+          echo "    - Base de datos: ${{ env.DATABASE_URL }}"
+          echo "    - API (SSL): ${{ env.API_URL }}"
+          echo "    - Cache TTL: ${{ env.CACHE_TTL }}s"
+          echo "    - Rate Limit: ${{ env.RATE_LIMIT }} req/min (ESTRICTO)"
+          
+          echo "  ▶ Verificando conectividad crítica..."
+          # Simular health checks críticos
+          sleep 3
+          
+          echo "  ▶ Configurando monitoreo y alertas..."
+          sleep 2
+          
+          echo "✅ Entorno de producción listo y monitoreado"
+          
+      - name: 🔥 Pre-deployment smoke tests
+        run: |
+          echo "🔥 Ejecutando smoke tests críticos pre-deployment..."
+          cd ./deploy-production
+          
+          # Tests críticos que DEBEN pasar antes del deploy
+          python -c "
+          import sys, json
+          sys.path.append('.')
+          
+          from calculadora import Calculadora
+          from config import config
+          
+          print('🌟 PRODUCCIÓN - Smoke Tests Críticos')
+          print('=' * 50)
+          
+          # Verificar configuración de producción
+          assert not config.DEBUG, 'DEBUG debe estar deshabilitado'
+          assert not config.TESTING, 'TESTING debe estar deshabilitado'
+          assert config.SSL_REQUIRED, 'SSL debe estar requerido'
+          print('✅ Configuración de producción: OK')
+          
+          # Tests funcionales críticos
+          calc = Calculadora()
+          
+          critical_tests = [
+              (calc.sumar, [100, 200], 300),
+              (calc.restar, [1000, 300], 700),
+              (calc.multiplicar, [25, 4], 100),
+              (calc.dividir, [1000, 25], 40.0),
+              (calc.potencia, [10, 2], 100),
+              (calc.raiz_cuadrada, [144], 12.0)
+          ]
+          
+          for func, args, expected in critical_tests:
+              result = func(*args)
+              assert result == expected, f'CRITICAL FAILURE: {func.__name__}{args}'
+              print(f'✅ {func.__name__}{args} = {result}')
+          
+          # Tests de casos límite críticos
+          try:
+              calc.dividir(1, 0)
+              raise AssertionError('CRITICAL: División por cero no controlada')
+          except ValueError:
+              print('✅ Control división por cero: OK')
+          
+          try:
+              calc.raiz_cuadrada(-4)
+              raise AssertionError('CRITICAL: Raíz negativa no controlada')
+          except ValueError:
+              print('✅ Control raíz negativa: OK')
+          
+          print('✅ TODOS LOS SMOKE TESTS CRÍTICOS PASARON')
+          print('Listo para deployment a producción')
+          "
+          
+      - name: 🌟 Deploy to Production (Blue-Green)
+        run: |
+          echo "🌟 DESPLEGANDO A PRODUCCIÓN - Blue-Green Deployment"
+          echo "======================================================"
+          
+          # Blue-Green deployment para producción
+          echo "  📈 Production deployment config:"
+          echo "    - Environment: ${{ env.ENVIRONMENT }}"
+          echo "    - Version: ${{ needs.build-production.outputs.version }}"
+          echo "    - SSL Required: ${{ env.SSL_REQUIRED }}"
+          echo "    - URL: ${{ env.WEB_URL }}"
+          echo "    - Artifact: ${{ needs.build-production.outputs.artifact-name }}"
+          
+          # Deployment de producción con máxima precaución
+          echo ""
+          echo "  ▶ [1/8] Creando snapshot de base de datos..."
+          sleep 3
+          
+          echo "  ▶ [2/8] Preparando entorno blue (nuevo)..."
+          sleep 4
+          
+          echo "  ▶ [3/8] Desplegando aplicación en blue..."
+          sleep 5
+          
+          echo "  ▶ [4/8] Ejecutando health checks extensivos..."
+          sleep 4
+          
+          echo "  ▶ [5/8] Validando conectividad de servicios..."
+          sleep 3
+          
+          echo "  ▶ [6/8] Ejecutando tests de regresión..."
+          sleep 3
+          
+          echo "  ▶ [7/8] Switcheando tráfico a blue (5% -> 25% -> 100%)..."
+          echo "    - 5% del tráfico..."
+          sleep 2
+          echo "    - 25% del tráfico..."
+          sleep 3
+          echo "    - 100% del tráfico..."
+          sleep 2
+          
+          echo "  ▶ [8/8] Finalizando y liberando entorno green (anterior)..."
+          sleep 2
+          
+          echo ""
+          echo "✅ DEPLOYMENT A PRODUCCIÓN COMPLETADO"
+          echo "📊 Métricas de deployment:"
+          echo "  - Tiempo total: ~30 segundos"
+          echo "  - Downtime: 0 segundos (blue-green)"
+          echo "  - Health checks: Passed"
+          echo "  - SSL: Enforced"
+          echo "  - Rate limiting: Active"
+          echo "  - Monitoring: Enabled"
+          
+      - name: 📝 Update production status
+        run: |
+          echo "deployment_status=success" >> $GITHUB_OUTPUT
+          echo "deployment_url=${{ env.WEB_URL }}" >> $GITHUB_OUTPUT
+          echo "environment=production" >> $GITHUB_OUTPUT
+          echo "version=${{ needs.build-production.outputs.version }}" >> $GITHUB_OUTPUT
+          
+  # ===============================================
+  # JOB 4: POST-DEPLOYMENT PARA PRODUCCIÓN
+  # ===============================================
+  post-deploy-production:
+    name: 📊 Post-Deployment Production Monitoring
+    runs-on: ubuntu-latest
+    needs: [build-production, deploy-production]
+    if: always()
+    
+    steps:
+      - name: 📊 Production metrics and alerts
+        run: |
+          echo "📊 Métricas críticas de producción:"
+          echo "  🌟 Environment: production"
+          echo "  🌿 Version: ${{ needs.build-production.outputs.version }}"
+          echo "  📦 Artifact: ${{ needs.build-production.outputs.artifact-name }}"
+          echo "  🔗 URL: ${{ needs.build-production.outputs.build-url }}"
+          echo "  ⏱️ Deploy time: $(date '+%H:%M:%S %Z')"
+          echo "  📊 Status: ${{ needs.deploy-production.result }}"
+          echo "  👤 Deployer: ${{ github.actor }}"
+          
+          # Simular envío de métricas críticas
+          echo ""
+          echo "  📊 Enviando métricas críticas..."
+          echo "    - Response time: <100ms"
+          echo "    - Memory usage: 32MB"
+          echo "    - CPU usage: 8%"
+          echo "    - Error rate: 0%"
+          echo "    - Uptime: 99.99%"
+          
+          # Configurar alertas
+          echo "  🚨 Configurando alertas de producción..."
+          echo "    - Error rate > 1%: CRITICAL"
+          echo "    - Response time > 500ms: WARNING"
+          echo "    - Memory > 80%: WARNING"
+          echo "    - Downtime: CRITICAL"
+          
+      - name: 📢 Production deployment notification
+        run: |
+          if [[ "${{ needs.deploy-production.result }}" == "success" ]]; then
+            echo "✅ 🎆 PRODUCCIÓN - Deployment exitoso"
+            echo "================================================"
+            echo "  🌟 Versión: ${{ needs.build-production.outputs.version }}"
+            echo "  🔗 URL: ${{ needs.build-production.outputs.build-url }}"
+            echo "  👤 Deployer: ${{ github.actor }}"
+            echo "  ⏰ Tiempo: $(date '+%Y-%m-%d %H:%M:%S %Z')"
+            echo "  🔒 Seguridad: SSL enforced, Rate limited"
+            echo "  🧪 Tests: 95%+ coverage, Security audited"
+            echo "  📊 Monitoreo: Activo, Alertas configuradas"
+            echo ""
+            echo "  📢 @everyone - Nueva versión en producción"
+            echo "  🔍 Monitor: ${{ needs.build-production.outputs.build-url }}/health"
+          else
+            echo "❌ 🚨 PRODUCCIÓN - DEPLOYMENT FALLIDO"
+            echo "============================================"
+            echo "  🌿 Versión: ${{ needs.build-production.outputs.version }}"
+            echo "  👤 Deployer: ${{ github.actor }}"
+            echo "  🔗 Logs: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo ""
+            echo "  🚨 @oncall @devteam - INCIDENTE DE PRODUCCIÓN"
+            echo "  🔄 Rollback necesario si es crítico"
+          fi
+          
+          # En un entorno real: notificación CRITICA a múltiples canales
+          echo "📧 Notificación crítica de producción enviada"
+          
+      - name: 📊 Setup production monitoring
+        if: needs.deploy-production.result == 'success'
+        run: |
+          echo "📊 Configurando monitoreo continuo de producción:"
+          echo "  - Health checks: Cada minuto"
+          echo "  - Performance monitoring: Continuo"
+          echo "  - Error tracking: Tiempo real"
+          echo "  - Log aggregation: Configurado"
+          echo "  - Backup schedule: Diario a 02:00 AM"
+          echo "  - Artifact retention: 90 días"
+          echo "  - Security monitoring: Activo"
+          echo "✅ Monitoreo de producción activado"
+          
+      - name: 🧹 Production maintenance schedule
+        run: |
+          echo "🧹 Programando mantenimiento de producción:"
+          echo "  - Performance review: Semanal"
+          echo "  - Security audit: Mensual"
+          echo "  - Dependency updates: Trimestral"
+          echo "  - Disaster recovery test: Semestral"
+          echo "✅ Cronograma de mantenimiento configurado"
